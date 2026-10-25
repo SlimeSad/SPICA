@@ -1,0 +1,188 @@
+"""GET síncrono de respuestas pequeñas con lectura incremental y límite estricto."""
+
+from dataclasses import dataclass
+from enum import Enum
+import math
+from types import MappingProxyType
+from typing import Mapping
+
+import httpx
+
+
+class TipoErrorHTTP(Enum):
+    TIMEOUT = "timeout"
+    CONEXION = "conexion"
+    TRANSPORTE = "transporte"
+    NO_AUTENTICADO = "no_autenticado"
+    PROHIBIDO = "prohibido"
+    NO_ENCONTRADO = "no_encontrado"
+    LIMITE_SOLICITUDES = "limite_solicitudes"
+    SERVIDOR = "servidor"
+    ESTADO_HTTP = "estado_http"
+    REDIRECCION = "redireccion"
+    RESPUESTA_PARCIAL = "respuesta_parcial"
+    TAMANO_EXCEDIDO = "tamano_excedido"
+    RESPUESTA_INVALIDA = "respuesta_invalida"
+
+
+class ErrorTransporteHTTP(Exception):
+    """Error técnico sin cuerpo, URL ni parámetros potencialmente sensibles."""
+
+    def __init__(self, tipo: TipoErrorHTTP, mensaje: str, codigo_http: int | None = None):
+        super().__init__(mensaje)
+        self.tipo = tipo
+        self.codigo_http = codigo_http
+
+
+@dataclass(frozen=True)
+class ConfiguracionHTTP:
+    timeout_conexion: float = 10.0
+    timeout_lectura: float = 30.0
+    timeout_escritura: float = 30.0
+    timeout_pool: float = 10.0
+    verificar_tls: bool = True
+    max_bytes_respuesta: int = 1_048_576
+
+    def __post_init__(self) -> None:
+        for nombre in ("timeout_conexion", "timeout_lectura", "timeout_escritura", "timeout_pool"):
+            valor = getattr(self, nombre)
+            if type(valor) not in (int, float) or not math.isfinite(valor) or valor <= 0:
+                raise ValueError(f"{nombre} debe ser finito y positivo")
+        if type(self.verificar_tls) is not bool:
+            raise TypeError("verificar_tls debe ser bool")
+        if type(self.max_bytes_respuesta) is not int or self.max_bytes_respuesta <= 0:
+            raise ValueError("max_bytes_respuesta debe ser un entero positivo")
+
+
+@dataclass(frozen=True)
+class RespuestaHTTP:
+    codigo_http: int
+    cabeceras: Mapping[str, str]
+    contenido: bytes
+
+
+def _url_autorizable(valor: str) -> httpx.URL:
+    try:
+        url = httpx.URL(valor)
+    except (httpx.InvalidURL, TypeError) as exc:
+        raise ValueError("URL inválida") from exc
+    if (url.scheme not in ("http", "https") or not url.host
+            or url.userinfo or url.fragment):
+        raise ValueError("Se requiere URL HTTP(S) absoluta, sin credenciales ni fragmento")
+    return url
+
+
+def _origen(url: httpx.URL) -> tuple[str, str, int]:
+    return (url.scheme, url.host, url.port or (443 if url.scheme == "https" else 80))
+
+
+class ClienteHTTP:
+    """El llamador autoriza el recurso; la lista de orígenes limita sus destinos.
+
+    El cliente es dueño de su transporte y debe cerrarse o usarse con ``with``.
+    Las redirecciones y los proxies del entorno están desactivados explícitamente.
+    """
+
+    def __init__(
+        self,
+        origenes_permitidos: tuple[str, ...],
+        configuracion: ConfiguracionHTTP | None = None,
+        *,
+        transporte: httpx.BaseTransport | None = None,
+    ) -> None:
+        if isinstance(origenes_permitidos, str) or not origenes_permitidos:
+            raise ValueError("Se requiere una colección no vacía de orígenes autorizados")
+        origenes = set()
+        for valor in origenes_permitidos:
+            url = _url_autorizable(valor)
+            if url.path != "/" or url.query:
+                raise ValueError("Los orígenes no deben contener rutas ni consultas")
+            origenes.add(_origen(url))
+        self._origenes = frozenset(origenes)
+        self.configuracion = configuracion or ConfiguracionHTTP()
+        config = self.configuracion
+        self._cliente = httpx.Client(
+            timeout=httpx.Timeout(connect=config.timeout_conexion, read=config.timeout_lectura,
+                                  write=config.timeout_escritura, pool=config.timeout_pool),
+            verify=config.verificar_tls,
+            follow_redirects=False,
+            trust_env=False,
+            headers={"Accept-Encoding": "identity"},
+            transport=transporte,
+        )
+
+    def __enter__(self) -> "ClienteHTTP":
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        self.close()
+
+    def close(self) -> None:
+        self._cliente.close()
+
+    def get(self, url: str, *, parametros: Mapping[str, str] | None = None) -> RespuestaHTTP:
+        destino = _url_autorizable(url)
+        if _origen(destino) not in self._origenes:
+            raise ValueError("El origen del recurso no está autorizado")
+        if parametros is not None:
+            if not isinstance(parametros, Mapping) or any(
+                not isinstance(k, str) or not isinstance(v, str) for k, v in parametros.items()
+            ):
+                raise TypeError("Los parámetros de consulta deben ser texto/texto")
+        try:
+            with self._cliente.stream("GET", destino, params=parametros) as respuesta:
+                self._validar_estado(respuesta.status_code)
+                # No se descomprime: evita expandir un cuerpo comprimido antes de limitarlo.
+                if respuesta.headers.get("content-encoding", "identity").lower() != "identity":
+                    raise ErrorTransporteHTTP(TipoErrorHTTP.RESPUESTA_INVALIDA,
+                                              "La respuesta comprimida no está admitida")
+                longitud = respuesta.headers.get("content-length")
+                esperado = None
+                if longitud is not None:
+                    if not longitud.isascii() or not longitud.isdecimal():
+                        raise ErrorTransporteHTTP(TipoErrorHTTP.RESPUESTA_INVALIDA,
+                                                  "Content-Length inválido")
+                    longitud = longitud.lstrip("0") or "0"
+                    if len(longitud) > len(str(self.configuracion.max_bytes_respuesta)):
+                        raise ErrorTransporteHTTP(TipoErrorHTTP.TAMANO_EXCEDIDO,
+                                                  "La respuesta excede el límite configurado")
+                    esperado = int(longitud)
+                    if esperado > self.configuracion.max_bytes_respuesta:
+                        raise ErrorTransporteHTTP(TipoErrorHTTP.TAMANO_EXCEDIDO,
+                                                  "La respuesta excede el límite configurado")
+                contenido = bytearray()
+                bloque = min(65_536, self.configuracion.max_bytes_respuesta + 1)
+                for parte in respuesta.iter_raw(chunk_size=bloque):
+                    if len(contenido) + len(parte) > self.configuracion.max_bytes_respuesta:
+                        raise ErrorTransporteHTTP(TipoErrorHTTP.TAMANO_EXCEDIDO,
+                                                  "La respuesta excede el límite configurado")
+                    contenido.extend(parte)
+                if esperado is not None and len(contenido) != esperado:
+                    raise ErrorTransporteHTTP(TipoErrorHTTP.RESPUESTA_INVALIDA,
+                                              "El tamaño recibido difiere de Content-Length")
+                return RespuestaHTTP(respuesta.status_code,
+                                     MappingProxyType(dict(respuesta.headers)), bytes(contenido))
+        except httpx.TimeoutException as exc:
+            raise ErrorTransporteHTTP(TipoErrorHTTP.TIMEOUT, "Tiempo de espera HTTP agotado") from exc
+        except httpx.ConnectError as exc:
+            raise ErrorTransporteHTTP(TipoErrorHTTP.CONEXION, "No se pudo conectar") from exc
+        except httpx.RequestError as exc:
+            raise ErrorTransporteHTTP(TipoErrorHTTP.TRANSPORTE, "Fallo del transporte HTTP") from exc
+
+    @staticmethod
+    def _validar_estado(codigo: int) -> None:
+        if 300 <= codigo < 400:
+            tipo = TipoErrorHTTP.REDIRECCION
+        elif codigo == 206:
+            tipo = TipoErrorHTTP.RESPUESTA_PARCIAL
+        elif 200 <= codigo < 300:
+            return
+        else:
+            tipo = {
+                401: TipoErrorHTTP.NO_AUTENTICADO,
+                403: TipoErrorHTTP.PROHIBIDO,
+                404: TipoErrorHTTP.NO_ENCONTRADO,
+                429: TipoErrorHTTP.LIMITE_SOLICITUDES,
+            }.get(codigo, TipoErrorHTTP.SERVIDOR if 500 <= codigo < 600
+                  else TipoErrorHTTP.ESTADO_HTTP)
+        raise ErrorTransporteHTTP(tipo, f"Respuesta HTTP no aceptada: {codigo}", codigo)
