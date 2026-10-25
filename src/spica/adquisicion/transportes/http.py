@@ -1,12 +1,17 @@
-"""GET síncrono de respuestas pequeñas con lectura incremental y límite estricto."""
+"""Transporte GET síncrono compartido por respuestas pequeñas y descargas a disco."""
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
 import math
 from types import MappingProxyType
-from typing import Mapping
+from typing import Iterator, Mapping, TYPE_CHECKING
+from pathlib import Path
 
 import httpx
+
+if TYPE_CHECKING:
+    from .descargas import InformeDescarga
 
 
 class TipoErrorHTTP(Enum):
@@ -23,6 +28,9 @@ class TipoErrorHTTP(Enum):
     RESPUESTA_PARCIAL = "respuesta_parcial"
     TAMANO_EXCEDIDO = "tamano_excedido"
     RESPUESTA_INVALIDA = "respuesta_invalida"
+    DISCO = "disco"
+    DESTINO_EXISTENTE = "destino_existente"
+    INTEGRIDAD_LOCAL = "integridad_local"
 
 
 class ErrorTransporteHTTP(Exception):
@@ -121,6 +129,28 @@ class ClienteHTTP:
         self._cliente.close()
 
     def get(self, url: str, *, parametros: Mapping[str, str] | None = None) -> RespuestaHTTP:
+        with self._abrir(url, parametros, self.configuracion.max_bytes_respuesta) as (respuesta, esperado):
+            contenido = bytearray()
+            bloque = min(65_536, self.configuracion.max_bytes_respuesta + 1)
+            for parte in self._bloques(respuesta, esperado, self.configuracion.max_bytes_respuesta, bloque):
+                contenido.extend(parte)
+            return RespuestaHTTP(respuesta.status_code,
+                                 MappingProxyType(dict(respuesta.headers)), bytes(contenido))
+
+    def descargar(
+        self, url: str, directorio: Path, nombre: str, *, max_bytes: int,
+        tamano_bloque: int = 65_536, parametros: Mapping[str, str] | None = None,
+    ) -> "InformeDescarga":
+        """Descarga a staging controlado; no confirma ni almacena un original RAW."""
+        from .descargas import descargar_archivo
+        return descargar_archivo(self, url, directorio, nombre, max_bytes=max_bytes,
+                                 tamano_bloque=tamano_bloque, parametros=parametros)
+
+    @contextmanager
+    def _abrir(
+        self, url: str, parametros: Mapping[str, str] | None, limite: int,
+    ) -> Iterator[tuple[httpx.Response, int | None]]:
+        """Única política de autorización, HTTP, compresión y errores de red."""
         destino = _url_autorizable(url)
         if _origen(destino) not in self._origenes:
             raise ValueError("El origen del recurso no está autorizado")
@@ -143,31 +173,38 @@ class ClienteHTTP:
                         raise ErrorTransporteHTTP(TipoErrorHTTP.RESPUESTA_INVALIDA,
                                                   "Content-Length inválido")
                     longitud = longitud.lstrip("0") or "0"
-                    if len(longitud) > len(str(self.configuracion.max_bytes_respuesta)):
+                    if len(longitud) > len(str(limite)):
                         raise ErrorTransporteHTTP(TipoErrorHTTP.TAMANO_EXCEDIDO,
                                                   "La respuesta excede el límite configurado")
                     esperado = int(longitud)
-                    if esperado > self.configuracion.max_bytes_respuesta:
+                    if esperado > limite:
                         raise ErrorTransporteHTTP(TipoErrorHTTP.TAMANO_EXCEDIDO,
                                                   "La respuesta excede el límite configurado")
-                contenido = bytearray()
-                bloque = min(65_536, self.configuracion.max_bytes_respuesta + 1)
-                for parte in respuesta.iter_raw(chunk_size=bloque):
-                    if len(contenido) + len(parte) > self.configuracion.max_bytes_respuesta:
-                        raise ErrorTransporteHTTP(TipoErrorHTTP.TAMANO_EXCEDIDO,
-                                                  "La respuesta excede el límite configurado")
-                    contenido.extend(parte)
-                if esperado is not None and len(contenido) != esperado:
-                    raise ErrorTransporteHTTP(TipoErrorHTTP.RESPUESTA_INVALIDA,
-                                              "El tamaño recibido difiere de Content-Length")
-                return RespuestaHTTP(respuesta.status_code,
-                                     MappingProxyType(dict(respuesta.headers)), bytes(contenido))
+                yield respuesta, esperado
         except httpx.TimeoutException as exc:
             raise ErrorTransporteHTTP(TipoErrorHTTP.TIMEOUT, "Tiempo de espera HTTP agotado") from exc
         except httpx.ConnectError as exc:
             raise ErrorTransporteHTTP(TipoErrorHTTP.CONEXION, "No se pudo conectar") from exc
         except httpx.RequestError as exc:
             raise ErrorTransporteHTTP(TipoErrorHTTP.TRANSPORTE, "Fallo del transporte HTTP") from exc
+
+    @staticmethod
+    def _bloques(
+        respuesta: httpx.Response, esperado: int | None, limite: int, bloque: int,
+    ) -> Iterator[bytes]:
+        recibido = 0
+        for parte in respuesta.iter_raw(chunk_size=bloque):
+            recibido += len(parte)
+            if recibido > limite:
+                raise ErrorTransporteHTTP(TipoErrorHTTP.TAMANO_EXCEDIDO,
+                                          "La respuesta excede el límite configurado")
+            if esperado is not None and recibido > esperado:
+                raise ErrorTransporteHTTP(TipoErrorHTTP.RESPUESTA_INVALIDA,
+                                          "El tamaño recibido difiere de Content-Length")
+            yield parte
+        if esperado is not None and recibido != esperado:
+            raise ErrorTransporteHTTP(TipoErrorHTTP.RESPUESTA_INVALIDA,
+                                      "El tamaño recibido difiere de Content-Length")
 
     @staticmethod
     def _validar_estado(codigo: int) -> None:

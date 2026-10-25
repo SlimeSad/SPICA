@@ -2,7 +2,9 @@
 
 `transportes/http.py` implementa `ClienteHTTP`, un cliente síncrono GET con HTTPX
 0.28.1. La única dependencia directa está fijada en `requirements.txt`.
-No importa ni modifica modelos de adquisición o científicos.
+El cliente comparte su política de red entre GET pequeño y descarga a disco.
+El adaptador del informe a `Descarga` reutiliza el contrato; no modifica modelos
+ni incorpora procesamiento científico.
 
 ## Uso y autorización
 
@@ -54,11 +56,13 @@ La respuesta exitosa contiene código HTTP, cabeceras de solo lectura y bytes de
 cuerpo pequeño. Convertir el buffer a bytes implica una copia acotada; también
 existen buffers internos de HTTPX y del transporte. No se llama `read()` para
 acumular respuestas sin límite. No aumentar el límite para archivos científicos
-grandes: todavía no existe una API para descargarlos a disco.
+grandes: para ellos usar `descargar()`, con límite independiente.
 
 Se solicita `Accept-Encoding: identity` y se rechazan cuerpos comprimidos, sin
 descomprimirlos. Esto evita expandir datos antes de aplicar el límite. El alcance
-actual es la lectura de respuestas pequeñas, no una descarga RAW completa.
+de `get()` sigue siendo la lectura de respuestas pequeñas. `descargar()` comparte
+esta política de compresión: SHA-256, Content-Length y archivo se refieren a los
+mismos bytes sin transformación.
 
 ## Errores
 
@@ -75,23 +79,26 @@ contener datos sensibles.
 - Tamaño excesivo, compresión no admitida, longitud inválida o discrepante generan
   errores técnicos. Se cierra la respuesta tanto en éxito como en error.
 
-Una respuesta 2xx aceptada no se convierte en `Descarga`, `Integridad` o estado
-`CONFIRMADO`. No se escribe ni verifica físicamente ningún archivo.
+Una respuesta 2xx de `get()` no se convierte en `Descarga`, `Integridad` o estado
+`CONFIRMADO`. `descargar()` escribe y relee un archivo local según las garantías
+descritas en [descargas_http.md](descargas_http.md), sin confirmar originales RAW.
 
 ## Pruebas y pendientes
 
 Todas las solicitudes de las pruebas usan `httpx.MockTransport` y destinos
 ficticios `.invalid`. Los flujos simulados permiten verificar el corte de lectura,
-cierre, discrepancias y errores durante la transferencia sin internet ni archivos.
+cierre, discrepancias y errores durante la transferencia sin internet.
+Las pruebas de descarga usan archivos y directorios efímeros dentro del proyecto.
 
 ```powershell
 & .\.venv\Scripts\python.exe -B -m unittest discover -s tests -v
 & .\.venv\Scripts\python.exe -B -m pip check
 ```
 
-Quedan pendientes descargas por streaming a disco, escritura atómica, reanudación,
-reintentos, autenticación, gestión de cookies, redirecciones autorizadas,
-descompresión acotada, soporte asíncrono y verificación física de archivos/hashes.
+Se implementó streaming a temporales, relectura SHA-256 y publicación exclusiva
+mediante enlace duro. Quedan pendientes reanudación, reintentos, autenticación,
+gestión de cookies, redirecciones autorizadas, descompresión acotada, soporte
+asíncrono y contraste con evidencia externa confiable de integridad.
 El cliente HTTPX mantiene cookies de sesión recibidas por su comportamiento estándar;
 no se implementa una política específica de sesión. Usar clientes separados cuando
 se necesite aislar sesiones. La lectura incremental interna y la inyección de
