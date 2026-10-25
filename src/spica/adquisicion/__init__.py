@@ -1,0 +1,1 @@
+"""Adquisición de información científica."""
