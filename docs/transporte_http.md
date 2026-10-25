@@ -72,7 +72,7 @@ la excepción HTTPX como causa: no registrar indiscriminadamente trazas que pued
 contener datos sensibles.
 
 - 401: no autenticado; 403: prohibido; 404: no encontrado.
-- 429: límite de solicitudes; no se interpreta Retry-After ni se reintenta.
+- 429: límite de solicitudes; la política optativa de reintentos interpreta Retry-After.
 - 5xx: error del servidor; otros estados no exitosos: error HTTP general.
 - 3xx: redirección rechazada; 206: respuesta parcial rechazada.
 - Timeout, conexión y otros errores HTTPX de transporte tienen categorías distintas.
@@ -96,7 +96,8 @@ Las pruebas de descarga usan archivos y directorios efímeros dentro del proyect
 ```
 
 Se implementó streaming a temporales, relectura SHA-256 y publicación exclusiva
-mediante enlace duro. Quedan pendientes reanudación, reintentos, autenticación,
+mediante enlace duro, además de [reintentos GET optativos](reintentos_http.md).
+Quedan pendientes reanudación, autenticación,
 gestión de cookies, redirecciones autorizadas, descompresión acotada, soporte
 asíncrono y contraste con evidencia externa confiable de integridad.
 El cliente HTTPX mantiene cookies de sesión recibidas por su comportamiento estándar;

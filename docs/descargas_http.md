@@ -112,6 +112,10 @@ relectura, destino existente y concurrente, publicación no soportada, 206, comp
 errores HTTP y timeout, rutas inseguras y residuos de limpieza. Usa MockTransport
 y directorios efímeros, con permisos heredados para compatibilidad con Windows.
 
+Los [reintentos optativos](reintentos_http.md) se aplican a la descarga completa:
+un fallo recuperable limpia el temporal y reinicia desde cero. Si la limpieza falla,
+no se reintenta; no se envía Range. Se conservan las garantías de publicación exclusiva.
+
 Pendientes: política de evidencia externa, validación científica, almacenamiento
-definitivo, catálogo duradero, recuperación tras cierre forzado, reintentos,
+definitivo, catálogo duradero, recuperación tras cierre forzado,
 reanudación, autenticación institucional y conectores. Ninguno se implementa aquí.

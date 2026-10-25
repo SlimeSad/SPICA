@@ -115,6 +115,7 @@ def descargar_archivo(
                 hash_disco = hashlib.sha256()
                 tamano_disco = 0
                 while bloque := archivo.read(min(tamano_bloque, max_bytes + 1)):
+                    cliente._gestor.comprobar_cancelacion()
                     tamano_disco += len(bloque)
                     if tamano_disco > max_bytes:
                         raise ErrorTransporteHTTP(TipoErrorHTTP.INTEGRIDAD_LOCAL,
@@ -126,6 +127,7 @@ def descargar_archivo(
         # El enlace es exclusivo: nunca se usa replace ni rename con sobrescritura.
         # Si otro proceso crea el destino, el sistema operativo rechaza la publicación.
         try:
+            cliente._gestor.comprobar_cancelacion()
             os.link(temporal, destino)
         except FileExistsError:
             raise ErrorTransporteHTTP(TipoErrorHTTP.DESTINO_EXISTENTE,
@@ -137,7 +139,11 @@ def descargar_archivo(
             codigo = getattr(exc, "codigo_http", None) or codigo
             informe = InformeDescarga(origen, datetime.now(timezone.utc), EstadoDescarga.FALLIDA,
                                        recibidos, None, None, codigo, tipo, restante, esperado)
-            raise ErrorDescargaArchivo(tipo, informe) from exc
+            error = ErrorDescargaArchivo(tipo, informe)
+            if isinstance(exc, ErrorTransporteHTTP) and restante is None:
+                error.recuperable = exc.recuperable
+                error.espera_servidor = exc.espera_servidor
+            raise error from exc
         if restante is not None:
             exc.add_note("No se pudo eliminar un temporal de descarga del directorio controlado")
         raise

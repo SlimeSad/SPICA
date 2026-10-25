@@ -4,14 +4,18 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
 import math
+import ssl
+from datetime import datetime
+from threading import Event
 from types import MappingProxyType
-from typing import Iterator, Mapping, TYPE_CHECKING
+from typing import Callable, Iterator, Mapping, TYPE_CHECKING
 from pathlib import Path
 
 import httpx
 
 if TYPE_CHECKING:
     from .descargas import InformeDescarga
+    from .reintentos import PoliticaReintentos, RegistroIntento
 
 
 class TipoErrorHTTP(Enum):
@@ -31,15 +35,23 @@ class TipoErrorHTTP(Enum):
     DISCO = "disco"
     DESTINO_EXISTENTE = "destino_existente"
     INTEGRIDAD_LOCAL = "integridad_local"
+    TLS = "tls"
+    CANCELADO = "cancelado"
 
 
 class ErrorTransporteHTTP(Exception):
     """Error técnico sin cuerpo, URL ni parámetros potencialmente sensibles."""
 
-    def __init__(self, tipo: TipoErrorHTTP, mensaje: str, codigo_http: int | None = None):
+    def __init__(self, tipo: TipoErrorHTTP, mensaje: str, codigo_http: int | None = None,
+                 *, recuperable: bool = False, espera_servidor: float | None = None):
         super().__init__(mensaje)
         self.tipo = tipo
         self.codigo_http = codigo_http
+        self.recuperable = recuperable
+        self.espera_servidor = espera_servidor
+        self.intentos = 0
+        self.agotados = False
+        self.historial = ()
 
 
 @dataclass(frozen=True)
@@ -84,6 +96,24 @@ def _origen(url: httpx.URL) -> tuple[str, str, int]:
     return (url.scheme, url.host, url.port or (443 if url.scheme == "https" else 80))
 
 
+def _error_tls(error: BaseException) -> bool:
+    pendientes = [error]
+    vistos = set()
+    while pendientes:
+        actual = pendientes.pop()
+        if id(actual) in vistos:
+            continue
+        vistos.add(id(actual))
+        if isinstance(actual, ssl.SSLError):
+            return True
+        # Algunos backends solo conservan el diagnóstico textual del certificado.
+        texto = str(actual).lower()
+        if any(marca in texto for marca in ("certificate", "certificado", "ssl", "tls")):
+            return True
+        pendientes.extend(e for e in (actual.__cause__, actual.__context__) if e is not None)
+    return False
+
+
 class ClienteHTTP:
     """El llamador autoriza el recurso; la lista de orígenes limita sus destinos.
 
@@ -97,6 +127,11 @@ class ClienteHTTP:
         configuracion: ConfiguracionHTTP | None = None,
         *,
         transporte: httpx.BaseTransport | None = None,
+        politica_reintentos: "PoliticaReintentos | None" = None,
+        espera: Callable[[float], object] | None = None,
+        aleatorio: Callable[[], float] | None = None,
+        reloj: Callable[[], datetime] | None = None,
+        cancelacion: Event | None = None,
     ) -> None:
         if isinstance(origenes_permitidos, str) or not origenes_permitidos:
             raise ValueError("Se requiere una colección no vacía de orígenes autorizados")
@@ -107,6 +142,14 @@ class ClienteHTTP:
                 raise ValueError("Los orígenes no deben contener rutas ni consultas")
             origenes.add(_origen(url))
         self._origenes = frozenset(origenes)
+        from .reintentos import GestorReintentos, PoliticaReintentos
+        opciones = {}
+        if aleatorio is not None:
+            opciones["aleatorio"] = aleatorio
+        if reloj is not None:
+            opciones["reloj"] = reloj
+        self._gestor = GestorReintentos(politica_reintentos or PoliticaReintentos(),
+                                        espera=espera, cancelacion=cancelacion, **opciones)
         self.configuracion = configuracion or ConfiguracionHTTP()
         config = self.configuracion
         self._cliente = httpx.Client(
@@ -128,7 +171,18 @@ class ClienteHTTP:
     def close(self) -> None:
         self._cliente.close()
 
+    @property
+    def historial_intentos(self) -> "tuple[RegistroIntento, ...]":
+        return self._gestor.historial
+
+    def cancelar(self) -> None:
+        """Cancelación cooperativa persistente para las operaciones de este cliente."""
+        self._gestor.cancelacion.set()
+
     def get(self, url: str, *, parametros: Mapping[str, str] | None = None) -> RespuestaHTTP:
+        return self._gestor.ejecutar_get(lambda: self._get_una_vez(url, parametros=parametros))
+
+    def _get_una_vez(self, url: str, *, parametros: Mapping[str, str] | None) -> RespuestaHTTP:
         with self._abrir(url, parametros, self.configuracion.max_bytes_respuesta) as (respuesta, esperado):
             contenido = bytearray()
             bloque = min(65_536, self.configuracion.max_bytes_respuesta + 1)
@@ -143,8 +197,9 @@ class ClienteHTTP:
     ) -> "InformeDescarga":
         """Descarga a staging controlado; no confirma ni almacena un original RAW."""
         from .descargas import descargar_archivo
-        return descargar_archivo(self, url, directorio, nombre, max_bytes=max_bytes,
-                                 tamano_bloque=tamano_bloque, parametros=parametros)
+        return self._gestor.ejecutar_get(lambda: descargar_archivo(
+            self, url, directorio, nombre, max_bytes=max_bytes,
+            tamano_bloque=tamano_bloque, parametros=parametros))
 
     @contextmanager
     def _abrir(
@@ -160,8 +215,16 @@ class ClienteHTTP:
             ):
                 raise TypeError("Los parámetros de consulta deben ser texto/texto")
         try:
+            self._gestor.comprobar_cancelacion()
             with self._cliente.stream("GET", destino, params=parametros) as respuesta:
-                self._validar_estado(respuesta.status_code)
+                try:
+                    self._validar_estado(respuesta.status_code)
+                except ErrorTransporteHTTP as error:
+                    if error.recuperable:
+                        from .reintentos import interpretar_retry_after
+                        error.espera_servidor = interpretar_retry_after(
+                            respuesta.headers.get("retry-after"), self._gestor.reloj())
+                    raise
                 # No se descomprime: evita expandir un cuerpo comprimido antes de limitarlo.
                 if respuesta.headers.get("content-encoding", "identity").lower() != "identity":
                     raise ErrorTransporteHTTP(TipoErrorHTTP.RESPUESTA_INVALIDA,
@@ -182,18 +245,28 @@ class ClienteHTTP:
                                                   "La respuesta excede el límite configurado")
                 yield respuesta, esperado
         except httpx.TimeoutException as exc:
-            raise ErrorTransporteHTTP(TipoErrorHTTP.TIMEOUT, "Tiempo de espera HTTP agotado") from exc
+            if _error_tls(exc):
+                raise ErrorTransporteHTTP(TipoErrorHTTP.TLS, "Fallo TLS") from exc
+            raise ErrorTransporteHTTP(TipoErrorHTTP.TIMEOUT, "Tiempo de espera HTTP agotado",
+                                      recuperable=True) from exc
         except httpx.ConnectError as exc:
-            raise ErrorTransporteHTTP(TipoErrorHTTP.CONEXION, "No se pudo conectar") from exc
+            if _error_tls(exc):
+                raise ErrorTransporteHTTP(TipoErrorHTTP.TLS, "Fallo TLS") from exc
+            raise ErrorTransporteHTTP(TipoErrorHTTP.CONEXION, "No se pudo conectar",
+                                      recuperable=True) from exc
         except httpx.RequestError as exc:
-            raise ErrorTransporteHTTP(TipoErrorHTTP.TRANSPORTE, "Fallo del transporte HTTP") from exc
+            if _error_tls(exc):
+                raise ErrorTransporteHTTP(TipoErrorHTTP.TLS, "Fallo TLS") from exc
+            raise ErrorTransporteHTTP(TipoErrorHTTP.TRANSPORTE, "Fallo del transporte HTTP",
+                                      recuperable=isinstance(exc, (httpx.ReadError, httpx.WriteError,
+                                                                   httpx.RemoteProtocolError))) from exc
 
-    @staticmethod
     def _bloques(
-        respuesta: httpx.Response, esperado: int | None, limite: int, bloque: int,
+        self, respuesta: httpx.Response, esperado: int | None, limite: int, bloque: int,
     ) -> Iterator[bytes]:
         recibido = 0
         for parte in respuesta.iter_raw(chunk_size=bloque):
+            self._gestor.comprobar_cancelacion()
             recibido += len(parte)
             if recibido > limite:
                 raise ErrorTransporteHTTP(TipoErrorHTTP.TAMANO_EXCEDIDO,
@@ -204,7 +277,8 @@ class ClienteHTTP:
             yield parte
         if esperado is not None and recibido != esperado:
             raise ErrorTransporteHTTP(TipoErrorHTTP.RESPUESTA_INVALIDA,
-                                      "El tamaño recibido difiere de Content-Length")
+                                      "El tamaño recibido difiere de Content-Length", recuperable=True)
+        self._gestor.comprobar_cancelacion()
 
     @staticmethod
     def _validar_estado(codigo: int) -> None:
@@ -222,4 +296,5 @@ class ClienteHTTP:
                 429: TipoErrorHTTP.LIMITE_SOLICITUDES,
             }.get(codigo, TipoErrorHTTP.SERVIDOR if 500 <= codigo < 600
                   else TipoErrorHTTP.ESTADO_HTTP)
-        raise ErrorTransporteHTTP(tipo, f"Respuesta HTTP no aceptada: {codigo}", codigo)
+        raise ErrorTransporteHTTP(tipo, f"Respuesta HTTP no aceptada: {codigo}", codigo,
+                                  recuperable=codigo in (408, 429, 500, 502, 503, 504))
