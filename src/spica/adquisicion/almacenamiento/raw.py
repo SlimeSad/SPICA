@@ -14,7 +14,7 @@ from uuid import uuid4
 
 from .catalogo import CatalogoRAW, ahora
 from .modelos import (ActivoRAW, ComprobacionRAW, DeclaracionRAW, DiagnosticoRAW,
-                      ErrorAlmacenamientoRAW, EstadoIncorporacion)
+                      ErrorAlmacenamientoRAW, EstadoIncorporacion, ObjetoCientifico, ProyectoCientifico)
 
 
 def _segura(ruta: Path) -> Path:
@@ -152,6 +152,41 @@ class AlmacenRAW:
 
     def close(self):
         self._catalogo.close()
+
+    def registrar_proyecto(self, proyecto: ProyectoCientifico) -> ProyectoCientifico:
+        if not isinstance(proyecto, ProyectoCientifico):
+            raise TypeError("Se requiere ProyectoCientifico")
+        for valor in (proyecto.project_id, proyecto.schema_version, proyecto.nombre,
+                      proyecto.contexto, proyecto.estado):
+            if valor is not None:
+                _referencia_publica(valor, sanear_url=False)
+        try:
+            return self._catalogo.registrar_proyecto(proyecto)
+        except sqlite3.Error as exc:
+            raise ErrorAlmacenamientoRAW("error_sqlite") from exc
+
+    def consultar_proyecto(self, project_id: str) -> ProyectoCientifico:
+        try:
+            return self._catalogo.consultar_proyecto(project_id)
+        except sqlite3.Error as exc:
+            raise ErrorAlmacenamientoRAW("error_sqlite") from exc
+
+    def registrar_objeto(self, objeto: ObjetoCientifico) -> ObjetoCientifico:
+        if not isinstance(objeto, ObjetoCientifico):
+            raise TypeError("Se requiere ObjetoCientifico")
+        for valor in (objeto.object_id, objeto.project_id, objeto.family, objeto.kind, objeto.state):
+            if valor is not None:
+                _referencia_publica(valor, sanear_url=False)
+        try:
+            return self._catalogo.registrar_objeto(objeto)
+        except sqlite3.Error as exc:
+            raise ErrorAlmacenamientoRAW("error_sqlite") from exc
+
+    def consultar_objeto(self, object_id: str) -> ObjetoCientifico:
+        try:
+            return self._catalogo.consultar_objeto(object_id)
+        except sqlite3.Error as exc:
+            raise ErrorAlmacenamientoRAW("error_sqlite") from exc
 
     def _ruta_contenido(self, hash_local: str) -> Path:
         if not isinstance(hash_local, str) or not re.fullmatch(r"[0-9a-f]{64}", hash_local):

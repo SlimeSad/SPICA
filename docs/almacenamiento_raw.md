@@ -7,9 +7,9 @@ No modifica los contratos del núcleo ni los transportes existentes.
 
 ## Identidad y organización provisional
 
-Se aplica la separación conceptual indicada para MD-01/02/03 en la solicitud.
-No se encontraron documentos completos de esos modelos en este repositorio; esta
-implementación no presupone conformidad con especificaciones no disponibles.
+Se implementa la compatibilidad estructural con los campos de MD-01/02/03
+proporcionados en el paso 51. No presupone conformidad científica ni requisitos
+adicionales de documentos no disponibles en el repositorio.
 
 - Proyecto: identificador lógico declarado, independiente de carpetas.
 - Objeto: identificador lógico declarado, vinculado a un proyecto, independiente
@@ -90,7 +90,8 @@ recurso `CONFIRMADO`. Almacenamiento incorporado no significa calidad científic
    de incorporación marca **FALLIDA** cuando SQLite permite registrar la transición.
 
 Cada transición y su evento se confirman en la misma transacción SQLite. El catálogo
-se versiona con `user_version=1`, activa claves foráneas, usa `synchronous=FULL`,
+se versiona con `user_version=2` para catálogos nuevos (se mantiene lectura/escritura
+RAW básica de v1), activa claves foráneas, usa `synchronous=FULL`,
 journal DELETE y timeout de bloqueo de cinco segundos. No se adopta una base ajena
 con tablas preexistentes sin versión ni una versión de esquema desconocida.
 
@@ -99,6 +100,80 @@ SHA-256, ruta relativa controlada, estados, códigos de error, advertencias y ev
 Los errores almacenados son códigos técnicos, no mensajes de excepciones o rutas
 de entrada. Las identidades de proyectos y objetos se mantienen en tablas separadas;
 la declaración pública de cada adquisición se conserva como JSON.
+
+## Compatibilidad estructural MD-01, MD-02 y MD-03 (paso 51)
+
+| Modelo | Campos públicos | Persistencia |
+| --- | --- | --- |
+| MD-01 `ProyectoCientifico` | project_id, schema_version, nombre, contexto, estado | proyectos: id y columnas homónimas de metadatos |
+| MD-02 `ObjetoCientifico` | object_id, project_id, family, kind, created_at, state | objetos: id, proyecto_id y columnas homónimas |
+| MD-03 `ActivoRAW` | asset_id, object_id, sha256, size_bytes, media_detected, storage_ref | activos: id, objeto_id, sha256, tamano, media_detected, ruta_interna |
+
+Los nombres MD-03 asset_id, object_id, size_bytes y storage_ref son propiedades
+de lectura sobre los datos existentes. No crean IDs o valores duplicados; se
+conservan los atributos activo_id, declaracion, tamano y ruta_interna anteriores.
+media_detected es un campo opcional añadido al final del dataclass, compatible
+con constructores posicionales anteriores. No hay detector de formato implementado:
+permanece None en las incorporaciones nuevas y en las migradas, aunque la extensión
+sea .csv o exista un tipo_medio_declarado. No se copia un dato declarado a comprobado.
+
+Proyecto y objeto solo requieren sus identidades (y la relación objeto-proyecto).
+Los metadatos desconocidos son None/NULL. schema_version es una etiqueta textual
+opcional del esquema del proyecto, declarada por el llamador: no se rellena a partir
+de user_version de SQLite ni se asume una versión por defecto.
+
+estado del proyecto y state del objeto son textos opcionales declarados; no usan
+EstadoIncorporacion ni cambian al adquirir/verificar archivos. No se inventan
+vocabularios de estado, familias ni tipos científicos. created_at es la fecha
+explícita de creación de la entidad lógica, con zona horaria y persistida en UTC.
+No se rellena con fecha de incorporación, fecha de migración ni fecha de observación
+científica. En registros anteriores sigue siendo desconocida.
+
+`AlmacenRAW.registrar_proyecto()` y `registrar_objeto()` permiten registrar los modelos;
+`consultar_proyecto()` y `consultar_objeto()` recuperarlos. Se aplican los filtros de
+metadatos públicos existentes. Un objeto explícito necesita un proyecto registrado.
+Las incorporaciones antiguas siguen creando automáticamente solo identidades y
+relaciones desconocidas, sin inventar el resto de campos.
+
+El registro es idempotente: permite completar campos NULL explícitamente, pero no
+sobrescribe metadatos conocidos contradictorios ni reasigna un objeto a otro proyecto.
+Registrar otra vez la misma identidad se refiere a la misma entidad; no se crea
+otra con ese ID. No hay API de borrado o reutilización ni edición del ciclo de vida.
+Una futura política para cambiar estados/metadatos requerirá diseño separado.
+Los IDs no contienen la ruta y se mantienen al trasladar una copia cerrada del
+almacén. Su asignación única entre instalaciones independientes sigue correspondiendo
+al llamador; no se implementa sincronización de catálogos.
+
+### Evolución del catálogo: v1 a v2
+
+La evolución es aditiva: cuatro columnas TEXT opcionales en proyectos
+(schema_version, nombre, contexto, estado), cuatro en objetos (family, kind,
+created_at, state) y una en activos (media_detected). No se borran/reconstruyen
+tablas ni se cambian registros existentes, JSON de declaraciones, hashes, rutas,
+relaciones, IDs o eventos. Los nuevos valores de filas anteriores son NULL.
+
+Abrir un catálogo v1 **no ejecuta una migración automática**. Continúan funcionando
+las incorporaciones RAW, comprobaciones, recuperación y consultas de identidades.
+Intentar registrar metadatos nuevos en v1 genera migracion_explicita_requerida.
+Un catálogo nuevo vacío se crea directamente con la capacidad v2 mediante la
+inicialización y evolución del esquema vacío, sin migrar datos previos.
+
+Se prepara la función pública `migrar_a_v2(conexion_sqlite)`, que exige autorización
+explícita del llamador. No abre rutas ni busca catálogos por su cuenta. Rechaza una
+transacción activa para no confirmar cambios ajenos. Ejecuta BEGIN IMMEDIATE,
+comprueba claves externas, añade columnas y cambia user_version en la misma
+transacción. Un fallo revierte DDL y versión. Repetir sobre v2 no altera filas ni
+esquema. Versiones no admitidas o relaciones rotas se rechazan sin modificarlas.
+
+Solo se ejecutó esta función sobre bases temporales sintéticas en las pruebas.
+No se migró ningún almacén operativo. Antes de una migración real se requiere
+aprobar el procedimiento, detener otros escritores y preparar un respaldo verificable.
+No se añadió una CLI, búsqueda automática, mecanismo de reparación ni downgrade.
+
+El dictamen de esta fase se limita a compatibilidad **estructural** con los campos
+indicados. INCORPORADA sigue significando comprobación técnica local y persistencia
+según las garantías existentes; no confirma autenticidad institucional ni calidad
+científica, ni añade integración HTTP→RAW.
 
 ## Consistencia, interrupciones y recuperación
 
@@ -204,13 +279,13 @@ descriptor que impida modificaciones posteriores a la comprobación.
 
 ## Decisiones abiertas
 
-- Revisar el alcance de IDs de objeto y su relación con proyectos al disponer de
-  los documentos completos MD-01/02/03.
+- Revisar vocabularios de family/kind/estados y el alcance global de IDs al disponer
+  de especificaciones adicionales de MD-01/02/03.
 - Política de recuperación, cuarentena, huérfanos, respaldo/migración y retención.
 - Permisos de solo lectura/inmutabilidad, concurrencia, volúmenes de red y durabilidad.
 - Evidencia externa de procedencia/autenticidad, formatos comprobados y validación
   científica, sin confundirlas con SHA-256 local.
-- Integración automática HTTP, catálogo de proyectos completo y consulta avanzada.
+- Integración automática HTTP, edición del ciclo de vida de proyectos/objetos y consulta avanzada.
 
 ## Verificación
 

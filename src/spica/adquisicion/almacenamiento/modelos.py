@@ -9,6 +9,49 @@ from typing import Mapping
 from ..nucleo import Fuente
 
 
+def _texto_opcional(valor: str | None, nombre: str):
+    if valor is not None and (not isinstance(valor, str) or not valor.strip()):
+        raise ValueError(f"{nombre} debe ser texto no vacío o None")
+
+
+@dataclass(frozen=True)
+class ProyectoCientifico:
+    project_id: str
+    schema_version: str | None = None
+    nombre: str | None = None
+    contexto: str | None = None
+    estado: str | None = None
+
+    def __post_init__(self):
+        _texto_opcional(self.project_id, "project_id")
+        if self.project_id is None:
+            raise ValueError("project_id es obligatorio")
+        for nombre in ("schema_version", "nombre", "contexto", "estado"):
+            _texto_opcional(getattr(self, nombre), nombre)
+
+
+@dataclass(frozen=True)
+class ObjetoCientifico:
+    object_id: str
+    project_id: str
+    family: str | None = None
+    kind: str | None = None
+    created_at: datetime | None = None
+    state: str | None = None
+
+    def __post_init__(self):
+        for nombre in ("object_id", "project_id"):
+            valor = getattr(self, nombre)
+            _texto_opcional(valor, nombre)
+            if valor is None:
+                raise ValueError(f"{nombre} es obligatorio")
+        for nombre in ("family", "kind", "state"):
+            _texto_opcional(getattr(self, nombre), nombre)
+        if self.created_at is not None:
+            if not isinstance(self.created_at, datetime) or self.created_at.utcoffset() is None:
+                raise ValueError("created_at debe ser datetime con zona horaria o None")
+
+
 class EstadoIncorporacion(Enum):
     PREPARADA = "preparada"
     VERIFICADA = "verificada_localmente"
@@ -58,6 +101,23 @@ class ActivoRAW:
     error: str | None
     advertencias: tuple[str, ...]
     comprobacion_utc: datetime | None
+    media_detected: str | None = None
+
+    @property
+    def asset_id(self) -> str:
+        return self.activo_id
+
+    @property
+    def object_id(self) -> str:
+        return self.declaracion.objeto_id
+
+    @property
+    def size_bytes(self) -> int | None:
+        return self.tamano
+
+    @property
+    def storage_ref(self) -> str | None:
+        return self.ruta_interna
 
 
 @dataclass(frozen=True)
