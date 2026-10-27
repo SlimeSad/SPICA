@@ -53,6 +53,9 @@ no se recortan espacios ni se cambian códigos. Formato y tipo de medio se etiqu
 como **declarados**; no se deducen del nombre ni se registran como comprobados.
 
 - `incorporar(archivo, declaracion) -> ActivoRAW`: copia, comprueba y publica.
+  Admite además `tamano_esperado` y `sha256_esperado` opcionales (ambos juntos),
+  contrastados con la copia físicamente releída antes de publicarla. Una discrepancia
+  deja FALLIDA la incorporación, no un activo disponible. Las llamadas previas no cambian.
 - `metadatos(activo_id)`: devuelve una instantánea persistente del catálogo;
   por sí sola no garantiza que el archivo siga intacto.
 - `verificar(activo_id) -> ComprobacionRAW`: relee el contenido y registra el
@@ -65,9 +68,10 @@ como **declarados**; no se deducen del nombre ni se registran como comprobados.
   operaciones incompletas/fallidas, inconsistencias, archivos sin referencia a una
   incorporación disponible y temporales. No elimina ni promueve registros.
 
-La ruta de un informe del descargador HTTP podrá entregarse a `incorporar()` si su
-directorio fue autorizado. En esta fase no hay automatización de esa integración:
-el almacén vuelve a calcular las evidencias y no confía en el hash de un informe.
+La ruta de un informe del descargador HTTP puede entregarse a `incorporar()` si su
+directorio fue autorizado. El [adaptador experimental del paso 53](integracion_http_raw.md)
+automatiza esa coordinación: el almacén vuelve a calcular las evidencias y exige
+que la copia física coincida con tamaño y SHA-256 del informe anterior.
 Se reutiliza `Fuente`; no se fabrica un `Integridad.VERIFICADA` o un estado del
 recurso `CONFIRMADO`. Almacenamiento incorporado no significa calidad científica.
 
@@ -173,7 +177,7 @@ No se añadió una CLI, búsqueda automática, mecanismo de reparación ni downg
 El dictamen de esta fase se limita a compatibilidad **estructural** con los campos
 indicados. INCORPORADA sigue significando comprobación técnica local y persistencia
 según las garantías existentes; no confirma autenticidad institucional ni calidad
-científica, ni añade integración HTTP→RAW.
+científica. La coordinación HTTP→RAW del paso 53 se documenta por separado.
 
 ## Consistencia, interrupciones y recuperación
 
@@ -285,7 +289,7 @@ descriptor que impida modificaciones posteriores a la comprobación.
 - Permisos de solo lectura/inmutabilidad, concurrencia, volúmenes de red y durabilidad.
 - Evidencia externa de procedencia/autenticidad, formatos comprobados y validación
   científica, sin confundirlas con SHA-256 local.
-- Integración automática HTTP, edición del ciclo de vida de proyectos/objetos y consulta avanzada.
+- Endurecimiento de la integración experimental HTTP, edición del ciclo de vida y consulta avanzada.
 
 ## Verificación
 

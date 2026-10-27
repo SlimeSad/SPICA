@@ -255,9 +255,17 @@ class AlmacenRAW:
                     or self._identidad(inicial) != self._identidad(ruta.stat())):
                 raise ErrorAlmacenamientoRAW("contenido_no_coincidente")
 
-    def incorporar(self, entrada: Path, declaracion: DeclaracionRAW) -> ActivoRAW:
+    def incorporar(self, entrada: Path, declaracion: DeclaracionRAW, *,
+                   tamano_esperado: int | None = None, sha256_esperado: str | None = None) -> ActivoRAW:
         if not isinstance(declaracion, DeclaracionRAW):
             raise TypeError("Se requiere DeclaracionRAW")
+        if (tamano_esperado is None) != (sha256_esperado is None):
+            raise ValueError("Se requiere tamaño y SHA-256 esperados juntos")
+        if tamano_esperado is not None:
+            if type(tamano_esperado) is not int or tamano_esperado < 0:
+                raise ValueError("El tamaño esperado debe ser un entero no negativo")
+            if not isinstance(sha256_esperado, str) or not re.fullmatch(r"[0-9a-f]{64}", sha256_esperado):
+                raise ValueError("Se requiere un SHA-256 hexadecimal válido")
         declaracion, advertencias = _declaracion_publica(declaracion, self.claves)
         activo_id = uuid4().hex
         temporal = None
@@ -271,6 +279,10 @@ class AlmacenRAW:
                                               dir=self.temporales, delete=False) as archivo:
                 temporal = Path(archivo.name)
                 tamano, hash_local = self._copiar(entrada, archivo)
+            # La copia ya fue releída físicamente. No publicar si rompe la evidencia
+            # técnica de la etapa anterior; no implica autenticidad institucional.
+            if tamano_esperado is not None and (tamano, hash_local) != (tamano_esperado, sha256_esperado):
+                raise ErrorAlmacenamientoRAW("evidencia_entrada_no_coincidente")
             destino = self._ruta_contenido(hash_local)
             destino.parent.mkdir(exist_ok=True)
             relativa = destino.relative_to(self.raiz).as_posix()
