@@ -25,3 +25,6 @@ ehthumbs.db
 Desktop.ini
 $RECYCLE.BIN/
 *~
+
+# Almacenamiento RAW operativo: alternativa local convencional
+/datos/raw/

@@ -1,14 +1,16 @@
 """RAW con datos sintéticos, SQLite real y directorios efímeros; sin red."""
 
 from dataclasses import replace
-from contextlib import closing
+from contextlib import closing, contextmanager
 import hashlib
 import os
 from pathlib import Path
 import shutil
 import sqlite3
 import sys
+import subprocess
 import tempfile
+import traceback
 import unittest
 from unittest.mock import patch
 from uuid import uuid4
@@ -397,6 +399,144 @@ class AlmacenRAWTests(unittest.TestCase):
         self.assertEqual(str(contexto.exception), "error_archivo")
         self.assertNotIn(b"secreto", (self.raw / "catalogo.sqlite3").read_bytes())
         self.assertEqual(list((self.raw / "temporales").iterdir()), [])
+
+    def test_referencias_de_red_ambiguas_no_persisten_secretos(self):
+        secreto = "CLAVE_SINTETICA_AUDITORIA"
+        referencias = (f"//usuario:{secreto}@prueba.invalid/recurso",
+                       f"  //usuario:{secreto}@prueba.invalid/recurso",
+                       f"\\\\usuario:{secreto}@prueba.invalid\\recurso",
+                       f"https:usuario:{secreto}@prueba.invalid/recurso",
+                       f"usuario:{secreto}@prueba.invalid/recurso",
+                       f"%2F%2Fusuario:{secreto}@prueba.invalid/recurso",
+                       f"https://prueba.invalid:{secreto}/recurso",
+                       f"https://[invalido-{secreto}/recurso",
+                       f"https://prueba.invalid/\n{secreto}")
+        for referencia in referencias:
+            with self.subTest(referencia=referencia), self.assertNoLogs():
+                with self.assertRaises(ErrorAlmacenamientoRAW) as contexto:
+                    self.almacen.incorporar(self.archivo, replace(self.declaracion, procedencia=referencia))
+                texto_error = "".join(traceback.format_exception(contexto.exception))
+                self.assertNotIn(secreto, texto_error)
+        self.assertEqual(self.almacen._catalogo.listar(), ())
+        self.assertEqual(self.almacen._catalogo.conexion.execute("SELECT COUNT(*) FROM eventos").fetchone()[0], 0)
+        self.assertNotIn(secreto.encode(), (self.raw / "catalogo.sqlite3").read_bytes())
+
+    def test_identificadores_con_autoridad_sin_esquema_se_rechazan(self):
+        for campo in ("recurso_id", "proyecto_id", "objeto_id"):
+            with self.subTest(campo=campo), self.assertRaises(ErrorAlmacenamientoRAW):
+                self.almacen.incorporar(self.archivo, replace(self.declaracion,
+                    **{campo: "//usuario:CLAVE_SINTETICA@prueba.invalid/r"}))
+        self.assertEqual(self.almacen._catalogo.listar(), ())
+
+    def test_http_https_publicos_se_sanean_sin_secretos_en_eventos(self):
+        secreto = "CLAVE_SINTETICA_AUDITORIA"
+        for esquema in ("http", "https"):
+            with self.subTest(esquema=esquema), self.assertNoLogs():
+                referencia = f"{esquema}://usuario:{secreto}@prueba.invalid/r?token={secreto}#password={secreto}"
+                activo = self.almacen.incorporar(self.archivo, replace(self.declaracion, procedencia=referencia))
+                self.assertEqual(activo.declaracion.procedencia, f"{esquema}://prueba.invalid/r")
+                self.assertTrue(activo.advertencias)
+                self.assertNotIn(secreto, repr(activo))
+        eventos = self.almacen._catalogo.conexion.execute("SELECT * FROM eventos").fetchall()
+        self.assertNotIn(secreto, repr([tuple(e) for e in eventos]))
+        self.assertNotIn(secreto.encode(), (self.raw / "catalogo.sqlite3").read_bytes())
+
+    def test_identificadores_cientificos_opacos_se_conservan_exactamente(self):
+        for identificador in (" ESTACION/001 ", "doi:10.0000/Serie-A", "urn:spica:recurso:ABC", "Variable#01"):
+            with self.subTest(identificador=identificador):
+                activo = self.almacen.incorporar(self.archivo, replace(self.declaracion, recurso_id=identificador))
+                self.assertEqual(activo.declaracion.recurso_id, identificador)
+        for referencia in (" DOI:10.0000/Serie-A ", "urn:spica:recurso:ABC"):
+            activo = self.almacen.incorporar(self.archivo, replace(self.declaracion, procedencia=referencia))
+            self.assertEqual(activo.declaracion.procedencia, referencia)
+
+    def test_parametro_publico_no_permite_credenciales_disfrazadas(self):
+        for valor in ("//usuario:CLAVE_SINTETICA@prueba.invalid/r", "https:usuario:CLAVE_SINTETICA@prueba.invalid",
+                      "%252F%252Fusuario:CLAVE_SINTETICA@prueba.invalid/r", "token%3DCLAVE_SINTETICA"):
+            activo = self.almacen.incorporar(self.archivo, replace(self.declaracion,
+                parametros_publicos={"variable": valor}))
+            self.assertEqual(dict(activo.declaracion.parametros_publicos), {})
+        self.assertNotIn(b"CLAVE_SINTETICA", (self.raw / "catalogo.sqlite3").read_bytes())
+
+    def test_reapertura_con_limite_menor_verifica_y_recupera_sin_corrupcion(self):
+        activo = self.incorporar()
+        self.almacen.close()
+        with AlmacenRAW(self.raw, (self.entrada,), max_bytes=1, tamano_bloque=2) as otro:
+            self.assertTrue(otro.verificar(activo.activo_id).coincide)
+            self.assertEqual(otro.recuperar(activo.activo_id).read_bytes(), self.archivo.read_bytes())
+            self.assertEqual(otro.metadatos(activo.activo_id).estado, EstadoIncorporacion.INCORPORADA)
+            self.assertEqual(otro.diagnosticar().inconsistentes, ())
+            with self.assertRaises(ErrorAlmacenamientoRAW) as contexto:
+                otro.incorporar(self.archivo, self.declaracion)
+            self.assertEqual(contexto.exception.codigo, "limite_excedido")
+            self.assertEqual(otro.metadatos(activo.activo_id).estado, EstadoIncorporacion.INCORPORADA)
+
+    def test_corrupcion_real_detectada_con_limite_menor(self):
+        activo = self.incorporar()
+        ruta = self.almacen.recuperar(activo.activo_id)
+        datos = ruta.read_bytes()
+        ruta.write_bytes(b"X" + datos[1:])
+        self.almacen.close()
+        with AlmacenRAW(self.raw, (self.entrada,), max_bytes=1) as otro:
+            self.assertFalse(otro.verificar(activo.activo_id).coincide)
+            self.assertEqual(otro.metadatos(activo.activo_id).estado, EstadoIncorporacion.INCONSISTENTE)
+
+    def test_fallo_de_acceso_o_recursos_no_declara_corrupcion(self):
+        activo = self.incorporar()
+        previo = self.almacen.metadatos(activo.activo_id)
+        for error in (PermissionError("denegado"), OSError("fallo temporal"), MemoryError("sin memoria")):
+            with self.subTest(error=type(error)), patch.object(self.almacen, "_comprobar_archivo", side_effect=error):
+                with self.assertRaises(ErrorAlmacenamientoRAW) as contexto:
+                    self.almacen.verificar(activo.activo_id)
+                self.assertEqual(contexto.exception.codigo, "verificacion_no_disponible")
+                self.assertEqual(self.almacen.metadatos(activo.activo_id), previo)
+                with self.assertRaises(ErrorAlmacenamientoRAW):
+                    self.almacen.recuperar(activo.activo_id)
+
+    def test_error_de_politica_no_declara_corrupcion(self):
+        activo = self.incorporar()
+        with patch.object(self.almacen, "_comprobar_archivo", side_effect=ErrorAlmacenamientoRAW("limite_excedido")):
+            with self.assertRaises(ErrorAlmacenamientoRAW) as contexto:
+                self.almacen.verificar(activo.activo_id)
+        self.assertEqual(contexto.exception.codigo, "verificacion_no_disponible")
+        self.assertEqual(self.almacen.metadatos(activo.activo_id).estado, EstadoIncorporacion.INCORPORADA)
+
+    def test_verificacion_lee_por_bloques_no_por_tamano_total(self):
+        activo = self.incorporar()
+        abrir_real = Path.open
+        lecturas = []
+        class LecturaAcotada:
+            def __init__(self, archivo):
+                self.archivo = archivo
+            def fileno(self):
+                return self.archivo.fileno()
+            def read(self, cantidad):
+                lecturas.append(cantidad)
+                return self.archivo.read(cantidad)
+        @contextmanager
+        def abrir(ruta, *args, **opciones):
+            with abrir_real(ruta, *args, **opciones) as archivo:
+                yield LecturaAcotada(archivo)
+        with patch.object(Path, "open", abrir):
+            self.almacen.max_bytes = 1
+            self.assertTrue(self.almacen.verificar(activo.activo_id).coincide)
+        self.assertGreater(len(lecturas), 1)
+        self.assertTrue(all(0 < n <= self.almacen.bloque for n in lecturas))
+
+    def test_git_excluye_solo_raw_operativo_convencional(self):
+        proyecto = Path(__file__).resolve().parents[1]
+        rutas = ("datos/raw/catalogo.sqlite3", "datos/raw/sha256/aa/archivo",
+                 "datos/raw/temporales/operacion.tmp", "datos/raw/catalogo.sqlite3-journal")
+        resultado = subprocess.run(["git", "check-ignore", "--no-index", "--", *rutas],
+                                   cwd=proyecto, capture_output=True, text=True, check=False)
+        self.assertEqual(resultado.returncode, 0, resultado.stderr)
+        self.assertEqual(set(resultado.stdout.splitlines()), set(rutas))
+        control = subprocess.run(["git", "check-ignore", "--no-index", "--",
+            "src/spica/adquisicion/almacenamiento/raw.py", "tests/test_almacenamiento_raw.py",
+            "docs/almacenamiento_raw.md", "datos/documentacion.txt"],
+            cwd=proyecto, capture_output=True, text=True, check=False)
+        self.assertEqual(control.returncode, 1, control.stderr)
+        self.assertEqual(control.stdout, "")
 
 
 if __name__ == "__main__":

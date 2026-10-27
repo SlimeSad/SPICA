@@ -9,7 +9,7 @@ import re
 import sqlite3
 import stat
 import tempfile
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import unquote, urlsplit, urlunsplit
 from uuid import uuid4
 
 from .catalogo import CatalogoRAW, ahora
@@ -43,6 +43,48 @@ def _privada(texto: str) -> bool:
     return bool(re.search(r"bearer\s|(?:token|password|passwd|secret|credential|authorization|api[_-]?key|firma|contrase[nñ]a)\s*[:=]", texto))
 
 
+def _referencia_publica(valor: str, *, sanear_url: bool) -> tuple[str, bool]:
+    """Clasifica sin reescribir identificadores opacos; errores sin texto de entrada."""
+    inspeccion = valor.strip()
+    # Detecta formas ofuscadas; nunca las decodifica para persistirlas como identificador.
+    decodificada = inspeccion
+    for _ in range(3):
+        decodificada = unquote(decodificada)
+    if (any(ord(c) < 32 or ord(c) == 127 for c in valor + decodificada)
+            or "\\" in decodificada or decodificada.startswith("//")):
+        raise ErrorAlmacenamientoRAW("referencia_sensible_o_ambigua")
+    try:
+        uri = urlsplit(inspeccion)
+        es_url = "://" in inspeccion or uri.scheme.lower() in ("http", "https") or bool(uri.netloc)
+        if not es_url:
+            if (_privada(decodificada) or "@" in decodificada
+                    or (sanear_url and ("?" in valor or "#" in valor))):
+                raise ErrorAlmacenamientoRAW("referencia_sensible_o_ambigua")
+            # Una URL escondida en escapes no se acepta como referencia opaca.
+            if "://" in decodificada:
+                raise ErrorAlmacenamientoRAW("referencia_sensible_o_ambigua")
+            return valor, False
+        if (uri.scheme not in ("http", "https") or not uri.netloc or not uri.hostname
+                or not inspeccion.lower().startswith(uri.scheme + "://")
+                or any(c.isspace() for c in inspeccion)):
+            raise ErrorAlmacenamientoRAW("referencia_url_no_admitida")
+        puerto = uri.port  # Valida también puertos mal formados, sin propagar su texto.
+        ruta_decodificada = uri.path
+        for _ in range(3):
+            ruta_decodificada = unquote(ruta_decodificada)
+        if _privada(ruta_decodificada) or _privada(uri.hostname):
+            raise ErrorAlmacenamientoRAW("referencia_sensible_o_ambigua")
+        if not sanear_url:
+            if uri.username is not None or uri.password is not None or uri.query or uri.fragment:
+                raise ErrorAlmacenamientoRAW("identificador_o_metadato_sensible")
+            return valor, False
+        host = f"[{uri.hostname}]" if ":" in uri.hostname else uri.hostname
+        limpia = urlunsplit((uri.scheme, host + (f":{puerto}" if puerto is not None else ""), uri.path, "", ""))
+        return limpia, limpia != valor
+    except ValueError:
+        raise ErrorAlmacenamientoRAW("referencia_url_no_admitida") from None
+
+
 def _declaracion_publica(declaracion: DeclaracionRAW, claves: frozenset[str]):
     advertencias = []
     parametros = {}
@@ -50,36 +92,25 @@ def _declaracion_publica(declaracion: DeclaracionRAW, claves: frozenset[str]):
                  "apikey", "signature", "contraseña", "contrasena", "cookie", "clave", "firma")
     for clave, valor in declaracion.parametros_publicos.items():
         normalizada = re.sub(r"[^a-z0-9ñ]", "", clave.casefold())
+        try:
+            _referencia_publica(valor, sanear_url=False)
+            valor_ambiguo = False
+        except ErrorAlmacenamientoRAW:
+            valor_ambiguo = True
         if (clave not in claves or any(s in normalizada for s in sensibles)
-                or _privada(valor) or "://" in valor):
+                or valor_ambiguo or "://" in valor):
             advertencias.append("parametro_omitido")
         else:
             parametros[clave] = valor
     procedencia = declaracion.procedencia
     if procedencia is not None:
-        if "://" in procedencia:
-            url = urlsplit(procedencia)
-            if url.scheme not in ("http", "https") or not url.hostname:
-                raise ErrorAlmacenamientoRAW("procedencia_no_admitida")
-            host = url.hostname
-            if ":" in host:
-                host = f"[{host}]"
-            netloc = host + (f":{url.port}" if url.port is not None else "")
-            limpia = urlunsplit((url.scheme, netloc, url.path, "", ""))
-            if limpia != procedencia:
-                advertencias.append("procedencia_sin_credenciales_consulta_fragmento")
-            procedencia = limpia
-        if _privada(procedencia) or "?" in procedencia or "#" in procedencia:
-            raise ErrorAlmacenamientoRAW("procedencia_sensible")
+        procedencia, modificada = _referencia_publica(procedencia, sanear_url=True)
+        if modificada:
+            advertencias.append("procedencia_sin_credenciales_consulta_fragmento")
     for valor in (declaracion.proyecto_id, declaracion.objeto_id, declaracion.recurso_id,
                   declaracion.fuente.proveedor, declaracion.fuente.identificador,
                   declaracion.formato_declarado or "", declaracion.tipo_medio_declarado or ""):
-        sensible = _privada(valor)
-        if "://" in valor:
-            uri = urlsplit(valor)
-            sensible = sensible or bool(uri.username or uri.password or uri.query or uri.fragment)
-        if sensible:
-            raise ErrorAlmacenamientoRAW("identificador_o_metadato_sensible")
+        _referencia_publica(valor, sanear_url=False)
     return replace(declaracion, procedencia=procedencia, parametros_publicos=parametros), tuple(dict.fromkeys(advertencias))
 
 
@@ -177,7 +208,14 @@ class AlmacenRAW:
             inicial = os.fstat(archivo.fileno())
             if inicial.st_size != tamano:
                 raise ErrorAlmacenamientoRAW("contenido_no_coincidente")
-            if (_huella(archivo, self.bloque, self.max_bytes) != (tamano, hash_local)
+            try:
+                # El tamaño del activo es evidencia persistida, no una política de entrada.
+                huella = _huella(archivo, self.bloque, tamano)
+            except ErrorAlmacenamientoRAW as exc:
+                if exc.codigo == "limite_excedido":
+                    raise ErrorAlmacenamientoRAW("contenido_no_coincidente") from None
+                raise
+            if (huella != (tamano, hash_local)
                     or self._identidad(inicial) != self._identidad(os.fstat(archivo.fileno()))
                     or self._identidad(inicial) != self._identidad(ruta.stat())):
                 raise ErrorAlmacenamientoRAW("contenido_no_coincidente")
@@ -252,8 +290,17 @@ class AlmacenRAW:
             if ruta.relative_to(self.raiz).as_posix() != activo.ruta_interna:
                 raise ErrorAlmacenamientoRAW("ruta_catalogo_inconsistente")
             self._comprobar_archivo(ruta, activo.tamano, activo.sha256)
-        except (OSError, ErrorAlmacenamientoRAW) as exc:
-            error = exc.codigo if isinstance(exc, ErrorAlmacenamientoRAW) else "contenido_no_accesible"
+        except FileNotFoundError:
+            error = "contenido_ausente"
+        except (OSError, MemoryError):
+            # Permisos, descriptores o fallos de lectura no demuestran corrupción.
+            raise ErrorAlmacenamientoRAW("verificacion_no_disponible", activo_id) from None
+        except ErrorAlmacenamientoRAW as exc:
+            if exc.codigo not in {"contenido_no_coincidente", "contenido_no_regular",
+                                   "ruta_catalogo_inconsistente", "hash_catalogo_invalido",
+                                   "enlace_no_autorizado", "ruta_insegura"}:
+                raise ErrorAlmacenamientoRAW("verificacion_no_disponible", activo_id) from None
+            error = exc.codigo
         estado = EstadoIncorporacion.INCONSISTENTE if error else activo.estado
         try:
             self._catalogo.transicion(activo_id, estado, error=error or activo.error,

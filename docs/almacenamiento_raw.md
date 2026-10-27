@@ -24,9 +24,17 @@ La igualdad se decide mediante tamaño y SHA-256 reales; se presupone la resiste
 a colisiones de SHA-256. No hay comparación científica ni equivalencia semántica.
 
 El directorio RAW debe existir, ser dedicado y estar bajo control del llamador.
-Contiene `catalogo.sqlite3`, `temporales/` y `sha256/`. No se creó un almacén local
-permanente en el repositorio y no se cambió `.gitignore`. Elegir un directorio de
-datos fuera del código antes de usar la API con archivos propios.
+Contiene `catalogo.sqlite3`, `temporales/` y `sha256/`. Ubicación operativa preferente:
+`C:\Users\Propietario\SPICA_DATOS\raw`, fuera del repositorio. El operador debe
+prepararla con permisos privados y pasarla explícitamente al constructor: no hay
+una ruta predeterminada ni creación automática de ese directorio.
+
+La alternativa interna convencional es `<repositorio>/datos/raw/`. `.gitignore`
+excluye únicamente `/datos/raw/`, incluyendo catálogo, journals, contenido y temporales.
+No excluye todo `datos/`, archivos SQLite globalmente ni código/documentación/pruebas.
+Una ubicación interna diferente no queda protegida por esa regla. La exclusión
+evita adiciones ordinarias accidentales, no `git add -f` ni archivos ya versionados.
+No se creó almacenamiento operativo ni se movieron/eliminaron datos existentes.
 
 ## API
 
@@ -34,7 +42,8 @@ Preparar directorios de entrada y RAW separados y existentes. El constructor
 `AlmacenRAW(directorio, raices_entrada, *, max_bytes=10*1024**3,
 tamano_bloque=65536, claves_parametros_publicos=())` autoriza explícitamente los
 directorios desde los que se podrán incorporar archivos. Los bloques son de hasta
-1 MiB y el tamaño máximo se aplica tanto por metadatos como contando bytes reales.
+1 MiB y el tamaño máximo se aplica a **nuevas incorporaciones**, tanto por metadatos
+como contando bytes reales. No limita la verificación de originales ya catalogados.
 Usar `with` o `close()` para cerrar el catálogo.
 
 `DeclaracionRAW` incluye proyecto, objeto, `Fuente` existente, identificador original
@@ -47,7 +56,9 @@ como **declarados**; no se deducen del nombre ni se registran como comprobados.
 - `metadatos(activo_id)`: devuelve una instantánea persistente del catálogo;
   por sí sola no garantiza que el archivo siga intacto.
 - `verificar(activo_id) -> ComprobacionRAW`: relee el contenido y registra el
-  resultado y la fecha UTC. Una falla marca el activo como inconsistente.
+  resultado y la fecha UTC. Una discrepancia física, ausencia o referencia insegura
+  marca el activo como inconsistente. Un error técnico o de política no equivale
+  a corrupción: lanza `verificacion_no_disponible` y conserva el registro anterior.
 - `recuperar(activo_id) -> Path`: exige incorporación completada y comprobación
   física satisfactoria en ese momento. No devuelve operaciones incompletas.
 - `diagnosticar() -> DiagnosticoRAW`: comprueba activos incorporados y enumera
@@ -124,12 +135,45 @@ contraseña, consulta y fragmento; queda advertencia de esa reducción. Una refe
 opaca pública se conserva si no presenta patrones sensibles. Identificadores con
 credenciales o URLs con consulta/usuario se rechazan en vez de alterarse.
 
+Se reconocen también autoridades sin esquema (`//usuario:clave@host/recurso`) y
+se rechazan, incluso sin credenciales: no se supone un esquema ni se consideran
+identificadores opacos seguros. Se rechazan barras invertidas, controles, formas
+HTTP(S) sin autoridad válida, puertos inválidos y referencias con `@` ambiguas.
+La inspección de escapes porcentuales es conservadora y acotada a tres pasadas;
+no se usan las formas decodificadas para reescribir identificadores científicos.
+DOI, URN y códigos opacos admitidos se conservan exactamente, incluidos sus espacios.
+Las URLs completas HTTP(S) declaradas por el llamador se sanean sin visitarlas:
+se retiran usuario, contraseña, consulta y fragmento y se emite advertencia genérica.
+Esto no constituye autorización de acceso remoto ni prueba de autenticidad.
+Errores de análisis y advertencias no reproducen la referencia ni los secretos.
+
 Estas medidas **no son un detector universal de secretos**. Un token opaco en una
 ruta URL o un valor aparentemente público no puede identificarse automáticamente.
 El llamador debe aprobar los metadatos como públicos antes de entregarlos, incluidas
 las rutas de procedencia. No se guardan cabeceras HTTP ni cadenas de excepción.
 Las causas encadenadas de una excepción pueden revelar detalles: no registrar trazas
 completas indiscriminadamente. SQLite no está cifrado y requiere permisos de acceso.
+
+## Separación entre incorporación, verificación y disponibilidad
+
+Reducir `max_bytes` al reabrir el almacén solo restringe nuevas entradas. La
+verificación lee por bloques y contrasta el tamaño/hash con los valores persistidos,
+sin usar ese límite de incorporación. El tamaño catalogado acota la lectura y
+permite rechazar crecimiento inesperado sin acumular el archivo en memoria.
+
+Un archivo ausente, tamaño/hash contradictorios, tipo no regular, enlace no autorizado
+o referencia de catálogo inconsistente justifican `INCONSISTENTE`. Permisos denegados,
+errores de lectura, falta de memoria o errores de política sin evidencia física
+producen `ErrorAlmacenamientoRAW('verificacion_no_disponible', activo_id)` y no
+actualizan estado, fecha de última comprobación ni eventos del activo. Tampoco
+permiten recuperar el archivo: el error se propaga. Una incorporación histórica
+conservada en metadatos no implica una comprobación actual satisfactoria.
+
+No se añadieron estados, campos ni migraciones. El cambio de comportamiento es
+explícito: los llamadores deben distinguir una comprobación negativa por inconsistencia
+de una excepción por imposibilidad de comprobar. `diagnosticar()` también puede
+propagar esa imposibilidad y no debe interpretarse como un diagnóstico completo.
+No se repara ni se vuelve a habilitar automáticamente un activo inconsistente.
 
 ## Garantías y límites técnicos
 
