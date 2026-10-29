@@ -6,6 +6,7 @@ from enum import Enum
 import math
 
 from ..nucleo import Fuente
+from ..nucleo.temporal import instante_utc, validar_intervalo
 
 
 class EstadoVerificacion(Enum):
@@ -44,6 +45,8 @@ def _fecha(valor, nombre, obligatoria=False, zona=True):
         return
     if not isinstance(valor, datetime) or (zona and valor.utcoffset() is None):
         raise ValueError(f"{nombre} debe ser datetime con zona conocida")
+    if valor.utcoffset() is not None:
+        instante_utc(valor)
 
 
 @dataclass(frozen=True)
@@ -192,10 +195,7 @@ class DisponibilidadCatalogo(_Entidad):
         for valor in (self.inicio, self.fin):
             _fecha(valor, "extremo temporal", zona=False)
         if self.inicio is not None and self.fin is not None:
-            if (self.inicio.utcoffset() is None) != (self.fin.utcoffset() is None):
-                raise ValueError("Los extremos deben tener coherencia de zona horaria")
-            if self.inicio > self.fin:
-                raise ValueError("Intervalo temporal invertido")
+            validar_intervalo(self.inicio, self.fin, permitir_civil=True)
         if self.cobertura_parcial is not None and type(self.cobertura_parcial) is not bool:
             raise TypeError("cobertura_parcial debe ser bool o None")
         _fecha(self.comprobada_utc, "comprobada_utc")
@@ -260,8 +260,8 @@ class FiltroCatalogo:
         _fecha(self.fin, "fin solicitado")
         if (self.inicio is None) != (self.fin is None):
             raise ValueError("La consulta temporal requiere ambos extremos")
-        if self.inicio is not None and self.inicio > self.fin:
-            raise ValueError("Período solicitado invertido")
+        if self.inicio is not None:
+            validar_intervalo(self.inicio, self.fin)
 
 
 @dataclass(frozen=True)

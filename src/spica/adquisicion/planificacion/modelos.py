@@ -5,6 +5,7 @@ from datetime import datetime
 from enum import Enum
 
 from ..nucleo import SolicitudAdquisicion
+from ..nucleo.temporal import validar_intervalo
 from ..catalogo import EstadoVerificacion, RegistroCatalogo, CapacidadCatalogo, ProductoCatalogo
 
 
@@ -71,6 +72,11 @@ class TramoTemporal:
     fin: datetime
     incluye_inicio: bool = True
     incluye_fin: bool = True
+
+    def __post_init__(self):
+        validar_intervalo(self.inicio, self.fin)
+        if type(self.incluye_inicio) is not bool or type(self.incluye_fin) is not bool:
+            raise TypeError("Los indicadores de inclusión deben ser bool")
 
 
 @dataclass(frozen=True)

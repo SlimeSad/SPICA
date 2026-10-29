@@ -6,6 +6,8 @@ from enum import Enum
 from types import MappingProxyType
 from typing import Mapping
 
+from .temporal import validar_intervalo
+
 
 def _texto(valor: str, nombre: str) -> None:
     if not isinstance(valor, str) or not valor.strip():
@@ -57,11 +59,7 @@ class SolicitudAdquisicion:
     def __post_init__(self) -> None:
         if not isinstance(self.fuente, Fuente):
             raise TypeError("fuente debe ser Fuente")
-        for fecha in (self.fecha_inicial, self.fecha_final):
-            if not isinstance(fecha, datetime) or fecha.utcoffset() is None:
-                raise ValueError("Las fechas deben ser datetime con zona horaria")
-        if self.fecha_inicial > self.fecha_final:
-            raise ValueError("fecha_inicial debe ser anterior o igual a fecha_final")
+        validar_intervalo(self.fecha_inicial, self.fecha_final)
         for nombre in ("estaciones", "variables"):
             valores = getattr(self, nombre)
             if isinstance(valores, str):

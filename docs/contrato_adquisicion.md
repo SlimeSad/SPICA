@@ -19,6 +19,11 @@ un intervalo temporal y parámetros específicos del proveedor. Las fechas son
 son pares texto/texto: se copian y se exponen como un mapa de solo lectura.
 Las colecciones se convierten en tuplas y los modelos son dataclasses congeladas.
 
+El PASO 67 valida el orden por instantes UTC, distingue `fold` en horas repetidas
+y rechaza horas locales inexistentes. Las fechas originales permanecen intactas;
+no se asigna zona a fechas civiles. Véase la [política temporal](politica_temporal.md)
+para las reglas compartidas con catálogo y planificación y sus límites.
+
 `RecursoDescubierto` describe una referencia opaca mediante identificador y
 localizador. El localizador no tiene que ser una URL. Formato y tipo de medio son
 textos opcionales, sin enumeración cerrada: pueden representar archivos binarios,

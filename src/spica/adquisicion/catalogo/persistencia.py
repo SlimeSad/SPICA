@@ -7,10 +7,12 @@ from enum import Enum
 import json
 from pathlib import Path
 import sqlite3
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..almacenamiento.raw import _referencia_publica, _segura
 from ..almacenamiento import ErrorAlmacenamientoRAW
 from ..nucleo import Fuente
+from ..nucleo.temporal import instante_utc
 from .modelos import (
     CapacidadCatalogo, CoincidenciaTemporal, DisponibilidadCatalogo, EntidadCatalogo,
     ErrorCatalogo, EstacionCatalogo, EstadoVerificacion, EvaluacionDisponibilidad,
@@ -26,7 +28,23 @@ _CLASES = {v: k for k, v in _TABLAS.items()}
 
 def _datos(valor):
     if isinstance(valor, datetime):
-        return {"__fecha__": valor.isoformat()}
+        datos = {"__fecha__": valor.isoformat()}
+        if valor.fold:
+            datos["__fold__"] = valor.fold
+        if isinstance(valor.tzinfo, ZoneInfo):
+            if not valor.tzinfo.key:
+                raise ErrorCatalogo("zona_temporal_sin_identificador_persistible")
+            datos.update(__zona__=valor.tzinfo.key, __fold__=valor.fold,
+                         __nombre_zona__=valor.tzname())
+            # Una clave de ZoneInfo.from_file no garantiza que pueda reabrirse.
+            # Comprobar antes de escribir evita guardar una fila ilegible.
+            _fecha_persistida(datos)
+        elif isinstance(valor.tzinfo, timezone):
+            if valor.tzname() != datetime.fromisoformat(valor.isoformat()).tzname():
+                datos["__nombre_zona__"] = valor.tzname()
+        elif valor.tzinfo is not None:
+            raise ErrorCatalogo("tipo_zona_temporal_no_persistible")
+        return datos
     if isinstance(valor, Enum):
         return valor.value
     if is_dataclass(valor):
@@ -51,10 +69,35 @@ def _publico(valor):
             _publico(elemento)
 
 
+def _fecha_persistida(dato):
+    if "__fecha__" not in dato:
+        return dato
+    try:
+        if not set(dato) <= {"__fecha__", "__fold__", "__zona__", "__nombre_zona__"}:
+            raise ValueError
+        fecha = datetime.fromisoformat(dato["__fecha__"])
+        fold = dato.get("__fold__", 0)
+        if type(fold) is not int or fold not in (0, 1):
+            raise ValueError
+        fecha = fecha.replace(fold=fold)
+        if "__zona__" in dato:
+            # No sustituir una zona ausente o cuyas reglas cambiaron por UTC.
+            zona = ZoneInfo(dato["__zona__"])
+            original = fecha.replace(tzinfo=zona)
+            if (original.utcoffset() != fecha.utcoffset()
+                    or original.tzname() != dato.get("__nombre_zona__")):
+                raise ValueError
+            instante_utc(original)
+            return original
+        if "__nombre_zona__" in dato:
+            fecha = fecha.replace(tzinfo=timezone(fecha.utcoffset(), dato["__nombre_zona__"]))
+        return fecha
+    except (ValueError, TypeError, OverflowError, ZoneInfoNotFoundError):
+        raise ErrorCatalogo("fecha_o_zona_persistida_no_reconstruible") from None
+
+
 def _leer_json(texto):
-    def objeto(dato):
-        return datetime.fromisoformat(dato["__fecha__"]) if set(dato) == {"__fecha__"} else dato
-    return json.loads(texto, object_hook=objeto)
+    return json.loads(texto, object_hook=_fecha_persistida)
 
 
 def _entidad(tabla, contenido):
@@ -434,11 +477,13 @@ def _temporal(registro, filtro):
     limites = (registro.inicio, registro.fin)
     if any(d is not None and d.utcoffset() is None for d in limites):
         return CoincidenciaTemporal.DESCONOCIDA
-    if ((registro.fin is not None and registro.fin < filtro.inicio)
-            or (registro.inicio is not None and registro.inicio > filtro.fin)):
+    inicio = instante_utc(registro.inicio) if registro.inicio is not None else None
+    fin = instante_utc(registro.fin) if registro.fin is not None else None
+    si, sf = instante_utc(filtro.inicio), instante_utc(filtro.fin)
+    if ((fin is not None and fin < si) or (inicio is not None and inicio > sf)):
         return CoincidenciaTemporal.FUERA_COBERTURA_CONOCIDA
     if registro.inicio is None or registro.fin is None:
         return CoincidenciaTemporal.DESCONOCIDA
-    if registro.inicio <= filtro.inicio and registro.fin >= filtro.fin:
+    if inicio <= si and fin >= sf:
         return CoincidenciaTemporal.CONTIENE_PERIODO
     return CoincidenciaTemporal.SOLAPAMIENTO_PARCIAL

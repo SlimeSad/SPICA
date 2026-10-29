@@ -79,6 +79,12 @@ su instante, sin cambiar las fechas originales conservadas en solicitud/evidenci
 Una zona textual no localiza automáticamente fechas naive del catálogo; extremos
 desconocidos o sin zona producen evaluación desconocida.
 
+El PASO 67 aplica claves UTC explícitas también a mínimos, máximos, ordenación,
+parcialidad y complemento; la comparación directa de Python puede ignorar `fold`
+cuando dos fechas comparten `tzinfo`. Se rechazan horas locales inexistentes.
+Véase la [política temporal](politica_temporal.md), incluida la persistencia de
+metadatos de zona y los límites de localización de fechas civiles.
+
 Cada operación usa la intersección con su registro explícito. Los intervalos
 discontinuos permanecen en operaciones distintas. No se crea una operación por
 observación ni se infiere resolución a partir de una frecuencia textual. Las

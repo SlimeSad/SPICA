@@ -5,6 +5,12 @@ revisiones. No consulta internet, no descarga, no valida observaciones científi
 ni planifica adquisiciones. Es dinámico porque admite registros y revisiones
 controladas, no porque se actualice automáticamente desde instituciones.
 
+El PASO 67 corrige las comparaciones de cobertura mediante instantes UTC y conserva
+zona/fold en el JSON nuevo, sin migrar tablas ni modificar registros anteriores.
+Las fechas civiles sin zona siguen siendo cobertura desconocida. La
+[política temporal](politica_temporal.md) detalla la compatibilidad y la necesidad
+de reglas locales para reconstruir zonas nombradas.
+
 ## Separación de arquitectura y almacenamiento
 
 `CatalogoCientifico(ruta_sqlite)` requiere una ruta explícita en un directorio
