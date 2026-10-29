@@ -34,29 +34,26 @@ def _texto(datos, completa, codificacion):
     return texto.removeprefix("\ufeff"), codec, bom, segura
 
 
+def _avanzar_comillas(estado, caracter, delimitador):
+    """Transición compartida por muestreo y streaming; None indica sintaxis inválida."""
+    if estado == "entrecomillado":
+        return "cerrado" if caracter == '"' else estado
+    if estado == "cerrado":
+        if caracter == '"':
+            return "entrecomillado"
+        return "inicio" if caracter == delimitador or caracter in "\r\n" else None
+    if caracter == '"':
+        return "entrecomillado" if estado == "inicio" else None
+    return "inicio" if caracter == delimitador or caracter in "\r\n" else "campo"
+
+
 def _comillas_coherentes(texto, delimitador):
     # csv.reader(strict=True) admite comillas literales en campos sin entrecomillar.
-    # Esta política conservadora exige entrecomillar esos campos; no interpreta datos.
     estado = "inicio"
     for caracter in texto:
-        if estado == "entrecomillado":
-            if caracter == '"':
-                estado = "cerrado"
-        elif estado == "cerrado":
-            if caracter == '"':
-                estado = "entrecomillado"
-            elif caracter == delimitador or caracter in "\r\n":
-                estado = "inicio"
-            else:
-                return False
-        elif caracter == '"':
-            if estado != "inicio":
-                return False
-            estado = "entrecomillado"
-        elif caracter == delimitador or caracter in "\r\n":
-            estado = "inicio"
-        else:
-            estado = "campo"
+        estado = _avanzar_comillas(estado, caracter, delimitador)
+        if estado is None:
+            return False
     return estado != "entrecomillado"
 
 
