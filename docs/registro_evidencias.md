@@ -1,5 +1,9 @@
 # PASO 65: registro institucional y evidencia por adquisición
 
+El [PASO 66](verificacion_formatos.md) añade posteriormente inspección estructural
+local. Las garantías y resultados históricos de este documento corresponden al
+PASO 65; las instantáneas documentales persistidas no se reescriben por inspeccionar.
+
 Alcance: SUADC-03 y SUADC-06. Se reutilizan el catálogo científico, su diario de
 revisiones, el adaptador HTTP→RAW y el catálogo RAW existentes. No hay un segundo
 catálogo ni otro motor de descarga. Las pruebas utilizan exclusivamente datos

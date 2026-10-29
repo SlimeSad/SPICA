@@ -28,6 +28,7 @@ class InformeDescarga:
     error: TipoErrorHTTP | None = None
     temporal_restante: Path | None = None
     bytes_declarados: int | None = None
+    tipo_medio_sugerido: str | None = None
 
     def como_descarga(self) -> Descarga:
         """Solo un archivo publicado puede representarse como descarga completa."""
@@ -72,6 +73,17 @@ def _limpiar(temporal: Path | None) -> Path | None:
     return None
 
 
+def _tipo_medio_publico(valor: str | None) -> str | None:
+    """Solo tipos conocidos; descarta parámetros y todo encabezado arbitrario."""
+    tipo = valor.split(";", 1)[0].strip().lower() if valor else None
+    return tipo if tipo in {
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "text/csv", "application/csv", "text/html", "application/json", "text/plain",
+        "application/zip", "application/octet-stream",
+    } else None
+
+
 def descargar_archivo(
     cliente: "ClienteHTTP", url: str, directorio: Path, nombre: str, *,
     max_bytes: int, tamano_bloque: int, parametros: Mapping[str, str] | None,
@@ -91,11 +103,13 @@ def descargar_archivo(
     recibidos = 0
     codigo = None
     esperado = None
+    tipo_medio = None
     try:
         if os.path.lexists(destino):
             raise ErrorTransporteHTTP(TipoErrorHTTP.DESTINO_EXISTENTE, "El destino ya existe")
         with cliente._abrir(url, parametros, max_bytes) as (respuesta, esperado):
             codigo = respuesta.status_code
+            tipo_medio = _tipo_medio_publico(respuesta.headers.get("content-type"))
             # NamedTemporaryFile crea de forma exclusiva, en el mismo sistema de archivos.
             with tempfile.NamedTemporaryFile(mode="w+b", prefix=".suadc-", suffix=".tmp",
                                               dir=destino.parent, delete=False) as archivo:
@@ -150,4 +164,5 @@ def descargar_archivo(
     restante = _limpiar(temporal)
     return InformeDescarga(origen, datetime.now(timezone.utc), EstadoDescarga.COMPLETA,
                            recibidos, hash_disco.hexdigest(), destino, codigo,
-                           temporal_restante=restante, bytes_declarados=esperado)
+                           temporal_restante=restante, bytes_declarados=esperado,
+                           tipo_medio_sugerido=tipo_medio)

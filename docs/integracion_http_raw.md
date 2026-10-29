@@ -12,6 +12,13 @@ al activo RAW, sin migrar SQLite. `AlmacenRAW.consultar_evidencia(asset_id)` y
 `recuperar(asset_id)` sigue siendo necesario para comprobar los bytes actuales.
 Véanse [las garantías y límites](registro_evidencias.md).
 
+El PASO 66 añade un resultado `estructura` y la propiedad `utilizable_documentalmente`.
+La inspección local se realiza después de recuperar/verificar físicamente RAW, con
+una `politica_estructura` opcional en el adaptador. Las respuestas inesperadas se
+conservan sin sobrescribir originales, con un estado estructural independiente del
+éxito HTTP y de la integridad SHA-256. No se guarda todavía este informe en SQLite
+ni se modifica `media_detected`. Véase [Verificación de formatos](verificacion_formatos.md).
+
 ## API y directorios
 
 El constructor recibe `cliente`, `almacen`, `directorio_temporal`, `max_bytes`

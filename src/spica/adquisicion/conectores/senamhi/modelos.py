@@ -52,6 +52,14 @@ class AdquisicionPNDA:
     capacidad_recurso: CapacidadCatalogo
 
     @property
+    def estructura(self):
+        return self.resultado_raw.estructura
+
+    @property
+    def utilizable_documentalmente(self) -> bool:
+        return self.resultado_raw.utilizable_documentalmente
+
+    @property
     def validacion_cientifica(self):
         return None
 

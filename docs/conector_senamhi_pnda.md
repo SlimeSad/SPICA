@@ -104,9 +104,12 @@ real y Content-Length cuando exista, SHA-256 calculado/releído físicamente,
 incorporación sin sobrescritura, persistencia y recuperación física desde RAW. Se
 conservan el original, su fuente, recurso, proyecto/objeto y producto. El hash local
 no es una firma de SENAMHI ni se compara con un hash oficial inexistente en la
-evidencia. No se inspecciona ni valida internamente el formato XLSX, ni se transforma
-su contenido; `media_detected` permanece desconocido. Un HTTP 200 con contenido
-erróneo podría preservarse técnicamente: la validación de formato queda pendiente.
+evidencia. Desde el PASO 66 se comprueba la estructura básica del XLSX sin transformar
+su contenido. `estructura` y `utilizable_documentalmente` separan ese resultado de
+la integridad física. Una respuesta inesperada se conserva como evidencia RAW y no
+se presenta como XLSX utilizable. `media_detected` permanece desconocido; el tipo
+identificado pertenece al informe estructural en memoria. Véase
+[Verificación de formatos](verificacion_formatos.md) para alcance y límites.
 
 Se mantienen los errores comunes, limpieza/residuos informados, rechazo de HTTP
 206, compresión HTTP y redirecciones. El contenedor ZIP propio de XLSX no es
@@ -153,7 +156,7 @@ no contactan PNDA. Cubren procedencia, identidad, catálogo, límites, errores,
 interrupciones, duplicados, credenciales y compatibilidad con el planificador.
 
 Quedan pendientes conservar el HTML original del descubrimiento, validación
-técnica del formato, caducidad de enlaces,
+semántica del libro y persistencia del informe estructural, caducidad de enlaces,
 reconciliación de identificadores, descarga aprobada de datos y lectura científica.
 La detección conservadora de secretos no identifica universalmente valores opacos:
 el llamador solo debe proporcionar identificadores y metadatos públicos revisados.

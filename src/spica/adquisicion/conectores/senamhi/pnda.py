@@ -248,7 +248,8 @@ class ConectorSENAMHIPNDA:
         resultado = self.adaptador.adquirir_documentado(publicado.recurso.localizador, declaracion, documento)
         fecha = resultado.activo.comprobacion_utc
         evidencia = ProcedenciaCatalogo(publicado.recurso.localizador, fecha, "GET_stream_HTTP_RAW",
-            "tamano_y_SHA256_releidos_fisicamente;asset_id=" + resultado.activo.asset_id)
+            "tamano_y_SHA256_releidos_fisicamente;asset_id=" + resultado.activo.asset_id
+            + ";estructura=" + resultado.estructura.estado.value)
         capacidad = CapacidadCatalogo(recurso_id, FUENTE_SENAMHI, publicado.producto_id,
             MecanismoAdquisicion.HTTP_DIRECTO, evidencia, estado=EstadoVerificacion.VERIFICADO,
             comprobada_utc=fecha)

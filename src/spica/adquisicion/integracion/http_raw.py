@@ -13,6 +13,7 @@ from ..almacenamiento import ActivoRAW, AlmacenRAW, DeclaracionRAW, ErrorAlmacen
 from ..almacenamiento.raw import _declaracion_publica, _segura
 from ..nucleo import EstadoDescarga
 from ..transportes import ClienteHTTP, ErrorTransporteHTTP, InformeDescarga, RegistroIntento
+from ..verificacion import PoliticaEstructura, ResultadoEstructura, verificar_archivo
 
 if TYPE_CHECKING:
     from ..catalogo import EvidenciaDocumental
@@ -23,6 +24,7 @@ class FaseHTTPRAW(Enum):
     DESCARGA = "descarga"
     INCORPORACION = "incorporacion"
     COMPROBACION = "comprobacion"
+    ESTRUCTURA = "estructura"
     COMPLETADA = "completada"
 
 
@@ -34,6 +36,11 @@ class ResultadoHTTPRAW:
     intentos_http: tuple[RegistroIntento, ...]
     temporal_restante: Path | None = None
     fase: FaseHTTPRAW = FaseHTTPRAW.COMPLETADA
+    estructura: ResultadoEstructura | None = None
+
+    @property
+    def utilizable_documentalmente(self) -> bool:
+        return self.estructura is not None and self.estructura.utilizable_documentalmente
 
 
 class ErrorIntegracionHTTPRAW(Exception):
@@ -59,7 +66,8 @@ class AdaptadorHTTPRAW:
     """
 
     def __init__(self, cliente: ClienteHTTP, almacen: AlmacenRAW, directorio_temporal: Path,
-                 *, max_bytes: int, tamano_bloque: int = 65_536):
+                 *, max_bytes: int, tamano_bloque: int = 65_536,
+                 politica_estructura: PoliticaEstructura | None = None):
         if type(max_bytes) is not int or max_bytes <= 0:
             raise ValueError("max_bytes debe ser un entero positivo")
         if type(tamano_bloque) is not int or not 1 <= tamano_bloque <= 1_048_576:
@@ -75,6 +83,9 @@ class AdaptadorHTTPRAW:
         self.temporales = raiz
         self.max_bytes = max_bytes
         self.bloque = tamano_bloque
+        if politica_estructura is not None and not isinstance(politica_estructura, PoliticaEstructura):
+            raise TypeError("Se requiere PoliticaEstructura")
+        self.politica_estructura = politica_estructura or PoliticaEstructura()
 
     def _limpiar(self, operacion: Path | None) -> Path | None:
         if operacion is None:
@@ -149,6 +160,13 @@ class AdaptadorHTTPRAW:
             # recuperar realiza otra lectura física del archivo publicado y comprueba
             # tamaño/hash contra el catálogo antes de entregar una referencia.
             ruta = self.almacen.recuperar(activo.asset_id)
+            fase = FaseHTTPRAW.ESTRUCTURA
+            # Se conserva la respuesta físicamente íntegra aunque su formato sea
+            # inesperado. Nunca se transforma el original ni se confirma el
+            # formato por la extensión, por HTTP 200 o por un MIME declarado.
+            estructura = verificar_archivo(ruta, formato_declarado=declaracion.formato_declarado,
+                nombre_sugerido=url, tipo_medio_sugerido=getattr(informe, "tipo_medio_sugerido", None),
+                politica=self.politica_estructura)
         except BaseException as exc:
             restante = self._limpiar(operacion)
             if not isinstance(exc, Exception):
@@ -164,4 +182,5 @@ class AdaptadorHTTPRAW:
                 codigo_http=getattr(exc, "codigo_http", None), temporal_restante=restante,
                 intentos_http=self.cliente.historial_intentos if fase is not FaseHTTPRAW.VALIDACION else ()) from None
         restante = self._limpiar(operacion)
-        return ResultadoHTTPRAW(informe, activo, ruta, self.cliente.historial_intentos, restante)
+        return ResultadoHTTPRAW(informe, activo, ruta, self.cliente.historial_intentos, restante,
+                                estructura=estructura)
