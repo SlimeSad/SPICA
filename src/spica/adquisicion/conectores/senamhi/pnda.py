@@ -9,7 +9,8 @@ from ...almacenamiento import DeclaracionRAW, ErrorAlmacenamientoRAW
 from ...almacenamiento.raw import _referencia_publica
 from ...catalogo import (
     CapacidadCatalogo, CatalogoCientifico, EstadoVerificacion, FuenteCatalogo,
-    MecanismoAdquisicion, ProcedenciaCatalogo, ProductoCatalogo,
+    MecanismoAdquisicion, ProcedenciaCatalogo, ProductoCatalogo, RecursoCatalogo,
+    EstadoRegistroDocumental, EvidenciaDocumental,
 )
 from ...integracion import AdaptadorHTTPRAW
 from ...nucleo import RecursoDescubierto
@@ -114,9 +115,14 @@ class ConectorSENAMHIPNDA:
         self.pagina, self.max_recursos = pagina_producto, max_recursos
         self.producto_id = urlsplit(pagina_producto).path.removeprefix("/dataset/")
         self._descubierto = None
+        self.registros_documentales = ()
+        self._revisiones = {}
+        self._conflicto_catalogo = False
 
     def descubrir(self) -> CatalogoRecursos:
         self._descubierto = None  # Un fallo nunca deja una autorización anterior vigente.
+        self.registros_documentales = ()
+        self._revisiones = {}
         respuesta = self.cliente.get(self.pagina)
         if respuesta.codigo_http != 200 or "text/html" not in respuesta.cabeceras.get("content-type", "").lower():
             raise ErrorConectorPNDA("pagina_producto_no_es_html_publico")
@@ -178,22 +184,46 @@ class ConectorSENAMHIPNDA:
         return resultado
 
     def registrar_catalogo(self, catalogo: CatalogoCientifico):
-        """Registro explícito, sin revisiones implícitas ni nuevo esquema de recursos."""
+        """Política documental explícita; conserva los tres registros de retorno.
+
+        Los resultados detallados, incluidos los recursos, quedan disponibles en
+        registros_documentales. Cada registro es transaccional; el lote no es una
+        transacción global. Una repetición segura permite completar un lote fallido.
+        """
         if self._descubierto is None:
             raise ErrorConectorPNDA("descubrimiento_previo_requerido")
         if not isinstance(catalogo, CatalogoCientifico):
             raise TypeError("Se requiere CatalogoCientifico")
         producto = self._descubierto.producto
-        fuente = FuenteCatalogo(FUENTE_SENAMHI, producto.procedencia,
+        institucional = ProcedenciaCatalogo("urn:spica:fuente:SENAMHI", producto.procedencia.revisada_utc,
+            "identidad_institucional_declarada_por_conector")
+        fuente = FuenteCatalogo(FUENTE_SENAMHI, institucional,
             nombre="Servicio Nacional de Meteorología e Hidrología del Perú - SENAMHI",
-            referencia_oficial=self.pagina, estado=EstadoVerificacion.DECLARADO)
+            estado=EstadoVerificacion.DECLARADO)
         capacidad = CapacidadCatalogo(self.pagina, FUENTE_SENAMHI, self.producto_id,
             MecanismoAdquisicion.HTTP_DIRECTO, producto.procedencia, estado=EstadoVerificacion.DECLARADO)
-        return tuple(catalogo.registrar(e) for e in (fuente, producto, capacidad))
+        recursos = tuple(RecursoCatalogo(r.recurso.fuente, r.producto_id, r.recurso.identificador,
+            r.recurso.localizador, r.procedencia, referencia_publicacion=r.referencia_publicacion,
+            titulo=r.titulo, formato=r.recurso.formato, tipo_medio=r.recurso.tipo_medio,
+            referencia_licencia=producto.restricciones_licencia) for r in self._descubierto.recursos)
+        self.registros_documentales, self._revisiones = (), {}
+        self._conflicto_catalogo = True  # También bloquea adquisiciones si el lote se interrumpe.
+        for entidad in (fuente, producto, capacidad, *recursos):
+            resultado = catalogo.registrar_documental(entidad)
+            self.registros_documentales += (resultado,)
+            if resultado.estado is EstadoRegistroDocumental.CONTRADICCION:
+                self._conflicto_catalogo = True
+                raise ErrorConectorPNDA("contradiccion_documental_requiere_evaluacion")
+        self._conflicto_catalogo = False
+        self._revisiones = {r.registro.entidad.identificador: r.registro.revision
+                            for r in self.registros_documentales if isinstance(r.registro.entidad, RecursoCatalogo)}
+        return tuple(r.registro for r in self.registros_documentales[:3])
 
     def adquirir(self, recurso_id: str, *, proyecto_id: str, objeto_id: str) -> AdquisicionPNDA:
         if self._descubierto is None:
             raise ErrorConectorPNDA("descubrimiento_previo_requerido")
+        if self._conflicto_catalogo:
+            raise ErrorConectorPNDA("contradiccion_documental_no_resuelta")
         publicado = next((r for r in self._descubierto.recursos if r.recurso.identificador == recurso_id), None)
         if publicado is None:
             raise ErrorConectorPNDA("recurso_no_publicado_en_descubrimiento_actual")
@@ -206,7 +236,16 @@ class ConectorSENAMHIPNDA:
         declaracion = DeclaracionRAW(proyecto_id, objeto_id, FUENTE_SENAMHI, recurso_id,
             procedencia=publicado.recurso.localizador,
             parametros_publicos={"producto_id": publicado.producto_id}, formato_declarado=publicado.recurso.formato)
-        resultado = self.adaptador.adquirir(publicado.recurso.localizador, declaracion)
+        documento = EvidenciaDocumental(FUENTE_SENAMHI, recurso_id, producto_id=publicado.producto_id,
+            referencia_publicacion=publicado.referencia_publicacion,
+            descubierta_utc=publicado.procedencia.revisada_utc,
+            referencia_licencia=self._descubierto.producto.restricciones_licencia,
+            revision_documental=self._revisiones.get(recurso_id),
+            revision_producto=self.registros_documentales[1].registro.revision if self._revisiones else None,
+            revision_fuente=self.registros_documentales[0].registro.revision if self._revisiones else None,
+            estado=EstadoVerificacion.DECLARADO, capacidades_documentadas=(MecanismoAdquisicion.HTTP_DIRECTO,),
+            procedencia=publicado.procedencia)
+        resultado = self.adaptador.adquirir_documentado(publicado.recurso.localizador, declaracion, documento)
         fecha = resultado.activo.comprobacion_utc
         evidencia = ProcedenciaCatalogo(publicado.recurso.localizador, fecha, "GET_stream_HTTP_RAW",
             "tamano_y_SHA256_releidos_fisicamente;asset_id=" + resultado.activo.asset_id)

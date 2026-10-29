@@ -49,7 +49,7 @@ class CatalogoRAW:
     def close(self):
         self.conexion.close()
 
-    def preparar(self, activo_id: str, declaracion: DeclaracionRAW, advertencias: tuple[str, ...]):
+    def preparar(self, activo_id: str, declaracion: DeclaracionRAW, advertencias: tuple[str, ...], *, evidencia=None):
         contenido = dict(proyecto_id=declaracion.proyecto_id, objeto_id=declaracion.objeto_id,
                          fuente=dict(proveedor=declaracion.fuente.proveedor,
                                      identificador=declaracion.fuente.identificador),
@@ -57,6 +57,10 @@ class CatalogoRAW:
                          parametros_publicos=dict(declaracion.parametros_publicos),
                          formato_declarado=declaracion.formato_declarado,
                          tipo_medio_declarado=declaracion.tipo_medio_declarado)
+        if evidencia is not None:
+            # Extensión JSON versionada, insertada junto al activo PREPARADA.
+            # Las transiciones posteriores nunca modifican este documento.
+            contenido["_evidencia_adquisicion"] = evidencia
         with self.conexion:
             self.conexion.execute("INSERT OR IGNORE INTO proyectos(id) VALUES (?)", (declaracion.proyecto_id,))
             self.conexion.execute("INSERT OR IGNORE INTO objetos(id,proyecto_id) VALUES (?,?)",
@@ -91,12 +95,26 @@ class CatalogoRAW:
         if fila is None:
             raise ErrorAlmacenamientoRAW("activo_no_encontrado", activo_id)
         datos = json.loads(fila["declaracion"])
+        datos.pop("_evidencia_adquisicion", None)
         datos["fuente"] = Fuente(**datos["fuente"])
         return ActivoRAW(fila["id"], DeclaracionRAW(**datos), datetime.fromisoformat(fila["fecha_utc"]),
                          EstadoIncorporacion(fila["estado"]), fila["tamano"], fila["sha256"],
                          fila["ruta_interna"], fila["error"], tuple(json.loads(fila["advertencias"])),
                          datetime.fromisoformat(fila["comprobacion_utc"]) if fila["comprobacion_utc"] else None,
                          fila["media_detected"] if "media_detected" in fila.keys() else None)
+
+    def evidencia(self, activo_id: str):
+        fila = self.conexion.execute("SELECT declaracion FROM activos WHERE id=?", (activo_id,)).fetchone()
+        if fila is None:
+            raise ErrorAlmacenamientoRAW("activo_no_encontrado", activo_id)
+        return json.loads(fila[0]).get("_evidencia_adquisicion")
+
+    def activo_de_adquisicion(self, adquisicion_id: str):
+        filas = self.conexion.execute("""SELECT id FROM activos WHERE
+            json_extract(declaracion,'$._evidencia_adquisicion.adquisicion_id')=?""", (adquisicion_id,)).fetchall()
+        if len(filas) != 1:
+            raise ErrorAlmacenamientoRAW("adquisicion_no_identificada_o_ambigua")
+        return filas[0][0]
 
     def listar(self) -> tuple[ActivoRAW, ...]:
         return tuple(self.consultar(fila[0]) for fila in self.conexion.execute("SELECT id FROM activos ORDER BY fecha_utc,id").fetchall())

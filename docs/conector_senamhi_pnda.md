@@ -63,17 +63,22 @@ conservan una sola vez y producen advertencia. No se añade un esquema SQLite.
 
 `registrar_catalogo(catalogo)` registra explícitamente fuente, producto, licencia
 declarada (URL publicada) y capacidad HTTP_DIRECTO DECLARADA. Se reutilizan las
-reglas del catálogo: la misma evidencia es idempotente y una revisión distinta no
-se sobrescribe automáticamente. Son tres registros, sin transacción conjunta;
-un conflicto posterior puede dejar registros previos ya guardados. El llamador
-debe revisar conflictos y usar las revisiones controladas existentes.
+reglas documentales del PASO 65: reconsultar sin cambios es idempotente; un cambio
+documental posterior conserva una revisión nueva. También persiste cada recurso
+en el diario existente. Conserva tres registros de retorno y expone los resultados
+completos en `registros_documentales`. No hay transacción conjunta del lote;
+un fallo puede dejar un prefijo registrado. La adquisición queda bloqueada hasta
+resolver el registro. La procedencia institucional usa una referencia local estable,
+independiente de las páginas de productos; no afirma una comprobación institucional.
 
 Una adquisición completa devuelve una `capacidad_recurso` VERIFICADA, con referencia
 al archivo concreto y al asset persistido. **No se registra esa capacidad como
 garantía de todos los archivos del producto en el catálogo del planificador**:
 su contrato actual no delimita capacidades por recurso. El conjunto de recursos y
-la evidencia específica se entregan al llamador; su persistencia adicional requiere
-un informe externo explícito, no una migración automática de los catálogos actuales.
+la evidencia específica se entregan al llamador. Desde el PASO 65, una instantánea
+documental y la comprobación HTTP quedan también vinculadas al activo en RAW,
+recuperables por activo o adquisición tras reabrir SQLite. No se rellenan
+retroactivamente los activos anteriores. Véase [Registro y evidencias](registro_evidencias.md).
 
 HTTP 200 de la página comprueba acceso público a metadatos, no a cada archivo. La
 licencia y formatos permanecen declarados. Los mocks prueban el comportamiento
@@ -147,8 +152,8 @@ Las pruebas unitarias usan SQLite efímero, `httpx.MockTransport` y un ZIP sint�
 no contactan PNDA. Cubren procedencia, identidad, catálogo, límites, errores,
 interrupciones, duplicados, credenciales y compatibilidad con el planificador.
 
-Quedan pendientes persistencia específica/versionada de recursos, evidencia HTML
-durable del descubrimiento, validación técnica del formato, caducidad de enlaces,
+Quedan pendientes conservar el HTML original del descubrimiento, validación
+técnica del formato, caducidad de enlaces,
 reconciliación de identificadores, descarga aprobada de datos y lectura científica.
 La detección conservadora de secretos no identifica universalmente valores opacos:
 el llamador solo debe proporcionar identificadores y metadatos públicos revisados.

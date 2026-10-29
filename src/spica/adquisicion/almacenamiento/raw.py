@@ -9,12 +9,16 @@ import re
 import sqlite3
 import stat
 import tempfile
+from typing import TYPE_CHECKING
 from urllib.parse import unquote, urlsplit, urlunsplit
 from uuid import uuid4
 
 from .catalogo import CatalogoRAW, ahora
 from .modelos import (ActivoRAW, ComprobacionRAW, DeclaracionRAW, DiagnosticoRAW,
                       ErrorAlmacenamientoRAW, EstadoIncorporacion, ObjetoCientifico, ProyectoCientifico)
+
+if TYPE_CHECKING:
+    from ..catalogo import EvidenciaDocumental, EvidenciaAdquisicion
 
 
 def _segura(ruta: Path) -> Path:
@@ -261,6 +265,57 @@ class AlmacenRAW:
 
     def incorporar(self, entrada: Path, declaracion: DeclaracionRAW, *,
                    tamano_esperado: int | None = None, sha256_esperado: str | None = None) -> ActivoRAW:
+        return self._incorporar(entrada, declaracion, tamano_esperado=tamano_esperado,
+                                sha256_esperado=sha256_esperado)
+
+    def incorporar_documentado(self, entrada: Path, declaracion: DeclaracionRAW, evidencia: "EvidenciaDocumental", *,
+                              url_solicitada: str, http_comprobada_utc: datetime,
+                              tamano_esperado: int, sha256_esperado: str,
+                              consulta_omitida: bool = False) -> ActivoRAW:
+        """HTTP declarado por el ejecutor; tamaño/hash se comprueban físicamente.
+
+        La instantánea se prepara junto al activo, incluso si después falla su
+        incorporación. No se permite agregar ni reemplazar evidencia a posteriori.
+        """
+        try:
+            from ..catalogo.evidencias import empaquetar
+            if tamano_esperado is None or sha256_esperado is None:
+                raise ValueError("Se requiere continuidad física de la transferencia")
+            paquete = empaquetar(evidencia, declaracion, url_solicitada, http_comprobada_utc, consulta_omitida)
+            return self._incorporar(entrada, declaracion, tamano_esperado=tamano_esperado,
+                sha256_esperado=sha256_esperado, evidencia=paquete)
+        except Exception as exc:
+            codigo = exc.codigo if isinstance(exc, ErrorAlmacenamientoRAW) else "incorporacion_documentada_no_disponible"
+            publico = ErrorAlmacenamientoRAW(codigo, getattr(exc, "activo_id", None))
+        from ._errores import _publicar
+        _publicar(publico)
+
+    def consultar_evidencia(self, activo_id: str) -> "EvidenciaAdquisicion | None":
+        """Solo metadatos persistidos; usar recuperar() para una nueva lectura física."""
+        try:
+            from ..catalogo.evidencias import desempaquetar
+            activo = self.metadatos(activo_id)
+            paquete = self._catalogo.evidencia(activo_id)
+            return None if paquete is None else desempaquetar(paquete, activo)
+        except Exception as exc:
+            codigo = exc.codigo if isinstance(exc, ErrorAlmacenamientoRAW) else "evidencia_no_disponible"
+            publico = ErrorAlmacenamientoRAW(codigo, activo_id)
+        from ._errores import _publicar
+        _publicar(publico)
+
+    def consultar_adquisicion(self, adquisicion_id: str) -> "EvidenciaAdquisicion":
+        try:
+            if not isinstance(adquisicion_id, str) or not re.fullmatch(r"[0-9a-f]{32}", adquisicion_id):
+                raise ErrorAlmacenamientoRAW("identificador_adquisicion_invalido")
+            return self.consultar_evidencia(self._catalogo.activo_de_adquisicion(adquisicion_id))
+        except Exception as exc:
+            codigo = exc.codigo if isinstance(exc, ErrorAlmacenamientoRAW) else "evidencia_no_disponible"
+            publico = ErrorAlmacenamientoRAW(codigo)
+        from ._errores import _publicar
+        _publicar(publico)
+
+    def _incorporar(self, entrada, declaracion, *, tamano_esperado=None, sha256_esperado=None,
+                    evidencia=None):
         if not isinstance(declaracion, DeclaracionRAW):
             raise TypeError("Se requiere DeclaracionRAW")
         if (tamano_esperado is None) != (sha256_esperado is None):
@@ -275,7 +330,7 @@ class AlmacenRAW:
         temporal = None
         preparada = False
         try:
-            self._catalogo.preparar(activo_id, declaracion, advertencias)
+            self._catalogo.preparar(activo_id, declaracion, advertencias, evidencia=evidencia)
             preparada = True
             entrada = self._entrada(entrada)
             _segura(self.temporales)

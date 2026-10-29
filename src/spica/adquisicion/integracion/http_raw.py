@@ -6,13 +6,16 @@ import os
 from pathlib import Path
 import re
 import shutil
-from typing import Mapping
+from typing import Mapping, TYPE_CHECKING
 from uuid import uuid4
 
 from ..almacenamiento import ActivoRAW, AlmacenRAW, DeclaracionRAW, ErrorAlmacenamientoRAW
 from ..almacenamiento.raw import _declaracion_publica, _segura
 from ..nucleo import EstadoDescarga
 from ..transportes import ClienteHTTP, ErrorTransporteHTTP, InformeDescarga, RegistroIntento
+
+if TYPE_CHECKING:
+    from ..catalogo import EvidenciaDocumental
 
 
 class FaseHTTPRAW(Enum):
@@ -90,6 +93,16 @@ class AdaptadorHTTPRAW:
 
     def adquirir(self, url: str, declaracion: DeclaracionRAW, *,
                  parametros: Mapping[str, str] | None = None) -> ResultadoHTTPRAW:
+        return self._adquirir(url, declaracion, parametros=parametros)
+
+    def adquirir_documentado(self, url: str, declaracion: DeclaracionRAW, evidencia: "EvidenciaDocumental", *,
+                            parametros: Mapping[str, str] | None = None) -> ResultadoHTTPRAW:
+        """La misma operación HTTP→RAW, con una instantánea documental opcional."""
+        if evidencia is None:
+            raise ErrorIntegracionHTTPRAW("evidencia_documental_requerida", FaseHTTPRAW.VALIDACION)
+        return self._adquirir(url, declaracion, parametros=parametros, evidencia=evidencia)
+
+    def _adquirir(self, url, declaracion, *, parametros=None, evidencia=None):
         fase = FaseHTTPRAW.VALIDACION
         operacion = None
         informe = None
@@ -103,6 +116,9 @@ class AdaptadorHTTPRAW:
             # Validar sin persistir antes de enviar una solicitud; incorporar vuelve
             # a aplicar el mismo filtro y registra sus advertencias, no secretos.
             _declaracion_publica(declaracion, self.almacen.claves)
+            if evidencia is not None:
+                from ..catalogo.evidencias import validar_documento
+                validar_documento(evidencia, declaracion)
             _segura(self.temporales)
             candidata = self.temporales / ("suadc-http-" + uuid4().hex)
             # Windows hereda ACL del padre privado. POSIX restringe el nuevo directorio.
@@ -119,8 +135,14 @@ class AdaptadorHTTPRAW:
                     or not re.fullmatch(r"[0-9a-f]{64}", informe.sha256)):
                 raise ErrorIntegracionHTTPRAW("informe_http_no_utilizable", fase)
             fase = FaseHTTPRAW.INCORPORACION
-            activo = self.almacen.incorporar(informe.ruta_local, declaracion,
-                tamano_esperado=informe.bytes_almacenados, sha256_esperado=informe.sha256)
+            if evidencia is None:
+                activo = self.almacen.incorporar(informe.ruta_local, declaracion,
+                    tamano_esperado=informe.bytes_almacenados, sha256_esperado=informe.sha256)
+            else:
+                activo = self.almacen.incorporar_documentado(informe.ruta_local, declaracion, evidencia,
+                    url_solicitada=url, http_comprobada_utc=informe.fecha_utc,
+                    tamano_esperado=informe.bytes_almacenados, sha256_esperado=informe.sha256,
+                    consulta_omitida=bool(parametros))
             fase = FaseHTTPRAW.COMPROBACION
             if (activo.tamano, activo.sha256) != (informe.bytes_almacenados, informe.sha256):
                 raise ErrorIntegracionHTTPRAW("continuidad_no_coincidente", fase, activo_id=activo.asset_id)

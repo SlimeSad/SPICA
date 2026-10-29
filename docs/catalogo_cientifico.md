@@ -20,10 +20,11 @@ No migra ni modifica el almacenamiento RAW, los contratos de adquisición o HTTP
 
 Se reutiliza `Fuente` del núcleo como espacio de identidad y el filtro conservador
 de rutas/metadatos públicos existente. No se duplica el transporte ni se inventan
-esquemas de proyecto/objeto/activo. El vínculo futuro con una adquisición usará los
-IDs públicos originales de fuente y producto/recurso, sin confundir un producto
-catalogado con un asset_id adquirido. No hay enlace automático ni claves externas
-entre archivos SQLite diferentes en esta versión.
+esquemas de proyecto/objeto/activo. El PASO 65 incorpora instantáneas documentales
+en cada adquisición RAW, conservando los IDs públicos originales y sus revisiones,
+sin confundir un producto catalogado con un asset_id adquirido. No hay claves
+externas ni transacción global entre archivos SQLite diferentes.
+Las reglas y limitaciones están en [Registro y evidencias](registro_evidencias.md).
 
 ## Entidades e identidad
 
@@ -35,6 +36,7 @@ entre archivos SQLite diferentes en esta versión.
 | VariableCatalogo | ID interno independiente global, Fuente/producto, código/nombre originales opcionales, descripción, unidad/frecuencia/tipo declarados y versión/procedencia del diccionario |
 | DisponibilidadCatalogo | ID de registro dentro de Fuente/producto, estación/variable opcionales, intervalo, precisión/zona/frecuencia, cobertura parcial opcional, estado y comprobación |
 | CapacidadCatalogo | ID dentro de Fuente/producto, mecanismo, estado, comprobación y descripción de mecanismos adicionales |
+| RecursoCatalogo (PASO 65) | Fuente/producto/ID original, localizador, publicación, título, formato y licencia declarados; revisiones en el diario existente, sin representar disponibilidad |
 
 Los IDs se conservan sin recortar espacios, cambiar mayúsculas o mapear códigos.
 Un ID de estación/producto repetido entre fuentes no colisiona. Estaciones se
@@ -99,6 +101,12 @@ resistencia frente a edición maliciosa directa de SQLite.
   no hay API de borrado, fusión ni corrección automática de vínculos.
 - `historial(entidad)` devuelve las entidades y números de revisión anteriores.
   El motivo y fecha informática también se conservan en la tabla revisiones.
+- `registrar_documental(entidad)` es una política optativa para fuente, producto,
+  recurso y capacidad: NUEVO, IDENTICO, REVISION_DOCUMENTAL o CONTRADICCION.
+  Conserva `registrar` y `actualizar` sin cambiar sus firmas ni su comportamiento.
+  `consultar_revision(entidad, revision)` recupera una versión histórica concreta;
+  `consultar_recurso(..., revision=None)` y `listar_recursos` consultan recursos.
+  Véanse los campos protegidos y la política de fechas en el contrato del PASO 65.
 
 El registro y su historial se confirman en una única transacción BEGIN IMMEDIATE.
 Un escritor con revisión obsoleta se rechaza tras obtener el bloqueo SQLite. Se

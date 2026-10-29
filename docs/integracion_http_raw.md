@@ -4,6 +4,14 @@
 `AlmacenRAW` existentes. No crea otro cliente, no cambia sus políticas y no migra
 catálogos. No incorpora conectores institucionales ni transformaciones científicas.
 
+El PASO 65 añade `adquirir_documentado(url, declaracion, evidencia, *, parametros=None)`
+sin modificar `adquirir()`. Comparte exactamente la misma descarga, comprobación,
+incorporación y limpieza. Conserva una instantánea documental por adquisición junto
+al activo RAW, sin migrar SQLite. `AlmacenRAW.consultar_evidencia(asset_id)` y
+`consultar_adquisicion(adquisicion_id)` recuperan sus metadatos después de reabrir;
+`recuperar(asset_id)` sigue siendo necesario para comprobar los bytes actuales.
+Véanse [las garantías y límites](registro_evidencias.md).
+
 ## API y directorios
 
 El constructor recibe `cliente`, `almacen`, `directorio_temporal`, `max_bytes`

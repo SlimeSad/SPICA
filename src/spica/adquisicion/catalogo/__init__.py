@@ -7,6 +7,8 @@ from .modelos import (
     ProductoCatalogo, RegistroCatalogo, ResultadoCatalogo, ResultadoProducto, VariableCatalogo,
 )
 from .persistencia import CatalogoCientifico
+from .documental import RecursoCatalogo, RegistroRecurso, EstadoRegistroDocumental, ResultadoRegistroDocumental
+from .evidencias import EvidenciaDocumental, EvidenciaAdquisicion
 
 __all__ = [
     "CapacidadCatalogo", "CatalogoCientifico", "CoincidenciaTemporal", "DisponibilidadCatalogo",
@@ -14,4 +16,6 @@ __all__ = [
     "EvaluacionDisponibilidad", "FiltroCatalogo", "FuenteCatalogo", "MecanismoAdquisicion",
     "ProcedenciaCatalogo", "ProductoCatalogo", "RegistroCatalogo", "ResultadoCatalogo",
     "ResultadoProducto", "VariableCatalogo",
+    "RecursoCatalogo", "RegistroRecurso", "EstadoRegistroDocumental", "ResultadoRegistroDocumental",
+    "EvidenciaDocumental", "EvidenciaAdquisicion",
 ]

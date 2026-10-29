@@ -1,5 +1,6 @@
 """Catálogo de descubrimiento independiente de SQLite RAW; sin acceso a la red."""
 
+from contextlib import closing
 from dataclasses import fields, is_dataclass
 from datetime import datetime, timezone
 from enum import Enum
@@ -103,14 +104,30 @@ class CatalogoCientifico:
                 self._crear()
             elif app != _APLICACION or version != 1:
                 raise ErrorCatalogo("catalogo_ajeno_o_version_no_admitida")
+            self._validar_estructura()
             self._conexion.execute("PRAGMA foreign_keys=ON")
             self._conexion.execute("PRAGMA synchronous=FULL")
         except BaseException:
             self._conexion.close()
             raise
 
-    def _crear(self):
-        self._conexion.executescript(f"""
+    def _validar_estructura(self):
+        """No adoptar una base incompleta por compartir application_id/version."""
+        def estructura(conexion):
+            return tuple((n, t, " ".join(sql.split()) if sql else None) for n, t, sql in
+                conexion.execute("SELECT name,type,sql FROM sqlite_master ORDER BY name"))
+        # Se reutiliza el mismo DDL en memoria; no se migra ni escribe la base
+        # inspeccionada y se comprueban también CHECK, PK, FK, índices y triggers.
+        with closing(sqlite3.connect(":memory:")) as memoria:
+            self._crear(conexion=memoria)
+            esperada = estructura(memoria)
+        if estructura(self._conexion) != esperada:
+            raise ErrorCatalogo("estructura_catalogo_no_admitida")
+        if self._conexion.execute("PRAGMA foreign_key_check").fetchone() is not None:
+            raise ErrorCatalogo("relaciones_catalogo_inconsistentes")
+
+    def _crear(self, *, conexion=None):
+        (conexion if conexion is not None else self._conexion).executescript(f"""
             BEGIN IMMEDIATE;
             CREATE TABLE fuentes (
                 proveedor TEXT NOT NULL, fuente_id TEXT NOT NULL,
@@ -213,27 +230,56 @@ class CatalogoCientifico:
     def registrar(self, entidad: EntidadCatalogo) -> RegistroCatalogo:
         return self._guardar(entidad, None, "registro_inicial")
 
+    def registrar_documental(self, entidad):
+        """Política optativa; registrar()/actualizar() conservan sus contratos."""
+        from .documental import registrar_documental
+        return registrar_documental(self, entidad)
+
+    def consultar_recurso(self, fuente: Fuente, producto_id: str, recurso_id: str, *, revision=None):
+        from .documental import consultar_recurso
+        return consultar_recurso(self, fuente, producto_id, recurso_id, revision)
+
+    def listar_recursos(self, fuente: Fuente, producto_id: str):
+        from .documental import consultar_recurso
+        claves = self._conexion.execute("SELECT DISTINCT clave FROM revisiones WHERE tabla='recursos' ORDER BY clave")
+        return tuple(consultar_recurso(self, fuente, producto_id, clave["identificador"])
+                     for fila in claves for clave in (json.loads(fila[0]),)
+                     if (clave["proveedor"], clave["fuente_id"], clave["producto_id"])
+                     == (fuente.proveedor, fuente.identificador, producto_id))
+
+    def consultar_revision(self, entidad, revision: int):
+        from .documental import RecursoCatalogo, _clave_recurso, consultar_revision
+        if isinstance(entidad, RecursoCatalogo):
+            tabla = "recursos"
+            clave = _clave_recurso(entidad.fuente, entidad.producto_id, entidad.identificador)
+        else:
+            tabla, clave = _TABLAS[type(entidad)], _clave(entidad)
+        return consultar_revision(self, tabla, clave, revision)
+
     def actualizar(self, entidad: EntidadCatalogo, *, revision_esperada: int, motivo: str) -> RegistroCatalogo:
         if type(revision_esperada) is not int or revision_esperada <= 0 or not isinstance(motivo, str) or not motivo.strip():
             raise ValueError("Se requiere revisión esperada positiva y motivo")
         _publico(motivo)
         return self._guardar(entidad, revision_esperada, motivo)
 
-    def _guardar(self, entidad, esperada, motivo):
+    def _guardar(self, entidad, esperada, motivo, *, transaccion_externa=False):
         if type(entidad) not in _TABLAS:
             raise TypeError("Entidad de catálogo no admitida")
         _publico(entidad)
         tabla = _TABLAS[type(entidad)]
         clave = _clave(entidad)
         contenido = json.dumps(_datos(entidad), ensure_ascii=False, sort_keys=True)
+        propia = not transaccion_externa
         try:
             # Control optimista de revisión bajo bloqueo de escritura SQLite.
-            self._conexion.execute("BEGIN IMMEDIATE")
+            if propia:
+                self._conexion.execute("BEGIN IMMEDIATE")
             fila = self._fila(tabla, clave)
             if fila is not None and esperada is None:
                 if fila["contenido"] != contenido:
                     raise ErrorCatalogo("registro_contradictorio_requiere_revision")
-                self._conexion.rollback()
+                if propia:
+                    self._conexion.rollback()
                 return RegistroCatalogo(entidad, fila["revision"])
             if esperada is not None:
                 if fila is None or fila["revision"] != esperada:
@@ -261,12 +307,15 @@ class CatalogoCientifico:
                                        + " AND ".join(k+"=?" for k in clave), tuple(valores.values()) + tuple(clave.values()))
             self._conexion.execute("INSERT INTO revisiones(tabla,clave,revision,contenido,registrada_utc,motivo) VALUES (?,?,?,?,?,?)",
                 (tabla, json.dumps(clave, sort_keys=True), revision, contenido, datetime.now(timezone.utc).isoformat(), motivo))
-            self._conexion.commit()
+            if propia:
+                self._conexion.commit()
         except sqlite3.IntegrityError:
-            self._conexion.rollback()
+            if propia:
+                self._conexion.rollback()
             raise ErrorCatalogo("relacion_o_identificador_invalido") from None
         except BaseException:
-            self._conexion.rollback()
+            if propia:
+                self._conexion.rollback()
             raise
         return RegistroCatalogo(entidad, revision)
 
