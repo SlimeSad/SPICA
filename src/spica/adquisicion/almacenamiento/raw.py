@@ -119,7 +119,7 @@ class AlmacenRAW:
 
     def __init__(self, directorio: Path, raices_entrada: tuple[Path, ...], *,
                  max_bytes: int = 10 * 1024**3, tamano_bloque: int = 65_536,
-                 claves_parametros_publicos: tuple[str, ...] = ()):
+                 claves_parametros_publicos: tuple[str, ...] = (), politica_inspeccion=None):
         for valor in (max_bytes, tamano_bloque):
             if type(valor) is not int or valor <= 0:
                 raise ValueError("Los límites deben ser enteros positivos")
@@ -136,13 +136,17 @@ class AlmacenRAW:
         self.claves = frozenset(claves_parametros_publicos)
         self.temporales = self.raiz / "temporales"
         self.contenidos = self.raiz / "sha256"
-        for carpeta in (self.temporales, self.contenidos):
-            _segura(carpeta).mkdir(exist_ok=True)
         catalogo = _segura(self.raiz / "catalogo.sqlite3")
         try:
-            self._catalogo = CatalogoRAW(catalogo)
+            self._catalogo = CatalogoRAW(catalogo, politica_inspeccion=politica_inspeccion)
         except sqlite3.Error as exc:
             raise ErrorAlmacenamientoRAW("error_sqlite") from exc
+        try:
+            for carpeta in (self.temporales, self.contenidos):
+                _segura(carpeta).mkdir(exist_ok=True)
+        except BaseException:
+            self._catalogo.close()
+            raise
 
     def __enter__(self):
         return self

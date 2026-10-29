@@ -110,15 +110,16 @@ o cancelado. No hay URLs, consultas, credenciales, cuerpos ni texto de excepció
 No se emiten logs ni se crea un catálogo. Una cancelación antes de solicitar se
 registra con número cero; una cancelación entre intentos no cuenta una solicitud nueva.
 
-Al agotar los intentos se propaga el último ErrorTransporteHTTP (o ErrorDescargaArchivo),
-con `agotados=True`, `intentos` e `historial`. No se cambia la clase del error original
-ni se oculta su causa técnica. Un fallo definitivo tiene `agotados=False`; el último
+Al agotar los intentos se publica un ErrorTransporteHTTP (o ErrorDescargaArchivo),
+con `agotados=True`, `intentos` e `historial`. Se conserva la categoría técnica y la
+clase pública prevista, pero no el objeto HTTPX original. Un fallo definitivo tiene `agotados=False`; el último
 registro diferencia el límite de espera del agotamiento. La excepción de descarga
 conserva su informe técnico del último intento. Los errores de configuración previos
 a una solicitud no generan registros de intentos HTTP.
 
-Las causas originales pueden incluir datos sensibles; no registrar indiscriminadamente
-la traza completa. El historial se reemplaza en cada operación y no es un registro
+Las causas originales pueden incluir datos sensibles y se separan del error público
+en `get()`/`descargar()`. No registrar variables locales ni estructuras privadas del
+backend. El historial se reemplaza en cada operación y no es un registro
 duradero. El cliente/gestor se diseña para operaciones secuenciales, sin aislamiento
 de historial o cancelación para varias operaciones concurrentes.
 

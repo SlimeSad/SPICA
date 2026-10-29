@@ -23,18 +23,158 @@ Dos activos pueden compartir contenido físico y conservar su propia procedencia
 La igualdad se decide mediante tamaño y SHA-256 reales; se presupone la resistencia
 a colisiones de SHA-256. No hay comparación científica ni equivalencia semántica.
 
-El directorio RAW debe existir, ser dedicado y estar bajo control del llamador.
-Contiene `catalogo.sqlite3`, `temporales/` y `sha256/`. Ubicación operativa preferente:
-`C:\Users\Propietario\SPICA_DATOS\raw`, fuera del repositorio. El operador debe
-prepararla con permisos privados y pasarla explícitamente al constructor: no hay
-una ruta predeterminada ni creación automática de ese directorio.
+La capa operativa `ConfiguracionRAW` propone `Path.home() / "SPICA_DATOS" / "raw"`,
+independiente del nombre del usuario Windows. El staging es un directorio hermano,
+`raw-staging`; contiene descargas efímeras, no otro catálogo. RAW contiene
+`catalogo.sqlite3`, `temporales/` y `sha256/`, además del marcador operativo.
+Crear una configuración o importar el paquete no crea esos directorios.
 
-La alternativa interna convencional es `<repositorio>/datos/raw/`. `.gitignore`
-excluye únicamente `/datos/raw/`, incluyendo catálogo, journals, contenido y temporales.
-No excluye todo `datos/`, archivos SQLite globalmente ni código/documentación/pruebas.
-Una ubicación interna diferente no queda protegida por esa regla. La exclusión
-evita adiciones ordinarias accidentales, no `git add -f` ni archivos ya versionados.
-No se creó almacenamiento operativo ni se movieron/eliminaron datos existentes.
+La ubicación operativa debe ser externa al código, dedicada y privada. Se rechazan
+el repositorio y sus ancestros, otros checkouts/worktrees, componentes internos
+`.git`, `.venv`, `.codex`, `.agents`, rutas relativas, `..`, symlinks y junctions.
+Los permisos efectivos deben revisarse antes del uso real; en Windows los directorios
+operativos heredan ACL y no se declara privacidad auditada automáticamente.
+
+`.gitignore` conserva la protección histórica `/datos/raw/`, pero esta regla no
+autoriza una ubicación interna para `ConfiguracionRAW`. Tampoco protege frente a
+adiciones forzadas o archivos ya versionados. El constructor de bajo nivel
+`AlmacenRAW` sigue recibiendo directorios ya existentes y autorizados explícitamente.
+No se ha inicializado el almacén operativo permanente.
+
+## Configuración e inicialización explícita (PASO 62-D)
+
+```python
+from pathlib import Path
+from spica.adquisicion.almacenamiento import ConfiguracionRAW
+from spica.adquisicion.almacenamiento.inspeccion import PoliticaInspeccionRAW
+
+config = ConfiguracionRAW()  # Solo configura; no escribe ni abre el almacén.
+personalizada = ConfiguracionRAW(
+    Path.home() / "SPICA_DATOS" / "laboratorio" / "raw",
+    inspeccion=PoliticaInspeccionRAW(max_bytes_temporales=256 * 1024**2),
+)
+```
+
+`validar()` inspecciona rutas, marcador, estructura SQLite, permisos básicos y
+espacio. No crea el almacén ni hace sondas de escritura en él; una inspección WAL
+puede crear una copia temporal privada fuera de los originales. `abrir()` exige
+un almacén reconocido, comprueba publicación exclusiva mediante sondas pequeñas
+y devuelve `AlmacenOperativoRAW`. `inicializar()` es la acción explícita que crea
+una raíz inexistente. Un directorio existente sin marcador válido, aunque esté
+vacío, no se adopta. Un staging ajeno tampoco se reutiliza.
+
+`ValidacionUbicacionRAW.estado` distingue `no_inicializado` e `inicializado`.
+Una incertidumbre, estructura incompatible o inicialización interrumpida produce
+una excepción cuyo `estado` es `revision_necesaria`; nunca un resultado operativo.
+`abrir()` sobre una raíz ausente genera `almacen_raw_no_inicializado` con estado
+`no_inicializado`. Permisos y espacio observados no son reservas ni bloqueos.
+
+El protocolo para una raíz nueva es:
+
+1. Crear exclusivamente los directorios y `.spica-raw.inicializando`. Escribir,
+   hacer flush/fsync de esa intención y sincronizar el directorio donde se admite.
+2. Comprobar escritura de staging, publicación exclusiva y limpieza de sondas;
+   crear el catálogo nuevo. No se migran catálogos existentes.
+3. Escribir el JSON en `.spica-marcador-<uuid>.tmp`, hacer flush/fsync, cerrar y
+   releer su contenido completo de forma acotada. Una escritura corta no se publica.
+4. Publicar `spica-raw.json` mediante enlace duro exclusivo al archivo completo;
+   nunca reemplazar un marcador que haya aparecido. Sincronizar el directorio
+   cuando la plataforma lo permite. Retirar el nombre temporal propio.
+5. Retirar la intención como última operación necesaria para habilitar el almacén.
+   No hay más escrituras requeridas después de ese punto.
+
+Mientras exista la intención, `validar()` y `abrir()` rechazan el almacén con
+`inicializacion_raw_requiere_revision`, incluso si ya existe un JSON final válido.
+Un fallo antes de publicar conserva una inicialización pendiente; un fallo tras
+publicar conserva el marcador y el catálogo para revisión. No se eliminan originales,
+catálogos ni marcadores finales como compensación. No hay recuperación automática:
+detener el uso y revisar estructura, catálogo y archivos antes de autorizar un
+procedimiento separado. No retirar la intención a ciegas.
+
+Si el sistema retira efectivamente la intención pero devuelve un error, se exige
+un nuevo reconocimiento completo antes de devolver éxito, con la advertencia
+`retiro_intencion_confirmado_tras_error`. Si no puede comprobarse, se propaga el
+error. Inicializar de nuevo un almacén reconocido lo abre con `nuevo=False`.
+Los marcadores válidos del PASO 62 conservan el mismo formato JSON v1 y se admiten
+si no existe una intención pendiente; esto no acredita durabilidad histórica.
+
+En POSIX se usa fsync del directorio antes de crear el catálogo y después de
+publicar el marcador. En Windows no hay fsync portable del directorio en esta
+implementación: el resultado nuevo advierte `sincronizacion_directorio_no_disponible`.
+No se fuerza una alternativa insegura ni se promete resistencia a apagados. No se
+exige sincronizar la retirada final de la intención: si reaparece tras un corte,
+el reconocimiento exige revisión. La ausencia o corrupción del marcador también
+impide reconocer el almacén. No hay una transacción global SQLite–archivos.
+
+Cada limpieza de sonda es independiente. Solo se intentan retirar nombres propios
+registrados al crearlos y bajo directorios controlados. Los fallos se devuelven
+como pares técnicos `fallos_limpieza`, por ejemplo
+`("sonda_publicada", "eliminacion_no_disponible")`, sin rutas ni texto del sistema.
+Un error principal conserva su código; si únicamente falla la limpieza se devuelve
+`limpieza_sondas_incompleta` o `limpieza_marcador_incompleta`. No se declara limpieza
+completa con residuos. Las sondas `.sonda-*` no son archivos RAW catalogados.
+
+Las fronteras `validar`, `abrir`, `inicializar` e `inspeccionar_catalogo` publican
+excepciones nuevas compatibles con `ErrorAlmacenamientoRAW`, con código, fase,
+estado y limpieza estructurada. No conservan args, causas, contextos, notas ni
+documentos JSON del backend. `diagnostico_publico()` selecciona esos campos para
+logging; también se comprueban las trazas estándar y `exc_info=True`. Esto no borra
+secretos de memoria ni autoriza registrar frames, variables locales o componentes
+privados. Las excepciones del motor RAW de bajo nivel mantienen sus límites previos.
+
+## Presupuesto de inspección SQLite/WAL
+
+Sin WAL no vacío se inspecciona mediante `mode=ro&immutable=1`, sin snapshot ni
+auxiliares nuevos. Con WAL se copian exclusivamente DB y WAL por bloques a
+`TemporaryDirectory`; SQLite crea allí su SHM, sin usar ni modificar el original.
+Los journals de rollback exigen revisión, sin recuperación automática.
+
+`PoliticaInspeccionRAW` configura:
+
+- `max_bytes_temporales`: 512 MiB por defecto, para copia más margen previsto.
+- `margen_bytes`: 16 MiB por defecto; mínimo 64 KiB para SHM y trabajo adicional.
+- `tamano_bloque`: hasta 1 MiB, configurable y comprobado durante la copia.
+- `directorio_temporal`: padre absoluto ya existente y sin enlaces; por defecto
+  se usa el temporal del sistema. La configuración operativa rechaza un padre
+  personalizado dentro del código o de componentes internos.
+
+El preflight requiere `DB + WAL + margen_bytes + ceil((DB + WAL) / 20)` bytes tanto
+en el presupuesto como en el espacio libre del volumen temporal. Se comprueba
+el padre real y el directorio temporal creado antes de copiar. Se vuelve a aplicar
+el presupuesto al contar bytes copiados. Los archivos se acotan al tamaño observado
+al inicio de cada copia; se detectan cambios ordinarios de identidad/tamaño/mtime.
+El margen es una estimación conservadora, no una cuota dura del sistema operativo
+ni una reserva de espacio. No se limita CPU/tiempo de SQLite. Se exige ausencia
+de otros escritores y un volumen local con permisos adecuados.
+
+Una copia, validación o limpieza fallida impide un resultado satisfactorio. Se
+conserva el error principal y se adjunta el rol `snapshot_sqlite` si queda pendiente
+su eliminación. La política se propaga desde `ConfiguracionRAW.inspeccion` hasta
+la apertura del motor y su catálogo; no se sustituye por el presupuesto por defecto
+en la segunda inspección. Las bases originales rechazadas permanecen intactas.
+
+Se comprobó `TemporaryDirectory` real: el sandbox de Codex rechazó acceso y limpieza
+de su directorio privado. Se retiró únicamente ese temporal de prueba mediante
+una ejecución autorizada fuera del sandbox. Otra prueba fuera del sandbox, con
+SQLite/WAL sintético, ejecutó la inspección real sin reemplazar TemporaryDirectory:
+aceptó v2, conservó DB/WAL/SHM y eliminó todos los temporales. Esto comprueba acceso
+y limpieza bajo ese usuario, no una auditoría de ACL frente a otros usuarios.
+Las pruebas unitarias de WAL usan contenedores sintéticos con permisos heredados;
+producción conserva el temporal privado y rechaza la operación si no puede usarlo.
+
+## Preparación de una inicialización real posterior
+
+Después de revisar estos cambios, aprobar por separado la ruta y la inicialización.
+Comprobar ACL, exclusión del código, volumen local, espacio de staging/RAW y volumen
+temporal, soporte de enlaces duros y ausencia de otros procesos. Ejecutar primero
+`validar()`; solo con autorización explícita llamar a `inicializar()`, revisar sus
+advertencias y cerrar el resultado. Reabrir y comprobar con un archivo sintético
+en una prueba separada y autorizada antes de adquirir datos ambientales.
+Ante cualquier error conservar el diagnóstico y los residuos para revisión.
+
+Persistencia local no equivale a respaldo. Este módulo no crea copias de seguridad,
+no protege frente a pérdida del volumen y no proporciona recuperación automática.
+Respaldo, retención y recuperación requieren su propio procedimiento aprobado.
 
 ## API
 
@@ -96,8 +236,11 @@ recurso `CONFIRMADO`. Almacenamiento incorporado no significa calidad científic
 Cada transición y su evento se confirman en la misma transacción SQLite. El catálogo
 se versiona con `user_version=2` para catálogos nuevos (se mantiene lectura/escritura
 RAW básica de v1), activa claves foráneas, usa `synchronous=FULL`,
-journal DELETE y timeout de bloqueo de cinco segundos. No se adopta una base ajena
-con tablas preexistentes sin versión ni una versión de esquema desconocida.
+journal DELETE para bases nuevas y timeout de bloqueo de cinco segundos. Las bases
+existentes se reconocen en solo lectura antes de abrirlas para operar; conservan
+su modo de diario, incluido WAL. No se adoptan archivos vacíos preexistentes,
+bases ajenas ni esquemas incompletos. Véase el procedimiento y las limitaciones
+de reconocimiento histórico en [PASO 62-B](correcciones_auditoria_altas.md).
 
 El catálogo conserva fecha UTC de preparación y última comprobación, tamaño real,
 SHA-256, ruta relativa controlada, estados, códigos de error, advertencias y eventos.
@@ -209,7 +352,8 @@ no controla el destino ni se persiste como identificador.
 Los parámetros se guardan solo si el llamador autoriza sus claves mediante una
 lista pública exacta. Se omiten claves sensibles reconocidas, valores con patrones
 de credenciales y valores URL, con advertencia sin registrar su texto. La lista
-predeterminada vacía no conserva parámetros. La procedencia HTTP(S) pierde usuario,
+predeterminada vacía de `AlmacenRAW` no conserva parámetros; `ConfiguracionRAW`
+autoriza por defecto únicamente `producto_id`. La procedencia HTTP(S) pierde usuario,
 contraseña, consulta y fragmento; queda advertencia de esa reducción. Una referencia
 opaca pública se conserva si no presenta patrones sensibles. Identificadores con
 credenciales o URLs con consulta/usuario se rechazan en vez de alterarse.
@@ -248,7 +392,7 @@ actualizan estado, fecha de última comprobación ni eventos del activo. Tampoco
 permiten recuperar el archivo: el error se propaga. Una incorporación histórica
 conservada en metadatos no implica una comprobación actual satisfactoria.
 
-No se añadieron estados, campos ni migraciones. El cambio de comportamiento es
+No se añadieron estados, campos ni migraciones a los contratos científicos. El cambio de comportamiento es
 explícito: los llamadores deben distinguir una comprobación negativa por inconsistencia
 de una excepción por imposibilidad de comprobar. `diagnosticar()` también puede
 propagar esa imposibilidad y no debe interpretarse como un diagnóstico completo.
@@ -269,8 +413,9 @@ entre ruta y descriptor por diferencias observadas en Windows.
 
 Los enlaces duros requieren soporte del volumen; si no existe, se falla sin una
 copia alternativa insegura. La publicación del nombre no sobrescribe y aparece con
-contenido completo en sistemas compatibles. No se sincronizan directorios ni se
-ha probado resistencia a cortes eléctricos. Un cierre forzado puede dejar temporales
+contenido completo en sistemas compatibles. La incorporación de contenidos RAW
+no sincroniza directorios; la sincronización limitada del marcador de configuración
+se describe arriba. No se ha probado resistencia a cortes eléctricos. Un cierre forzado puede dejar temporales
 o contenidos sin un resultado retornado. El catálogo no es inmutable ni está firmado.
 
 Uso previsto: operaciones secuenciales y directorios privados en un volumen local.
@@ -293,13 +438,23 @@ descriptor que impida modificaciones posteriores a la comprobación.
 
 ## Verificación
 
-Las pruebas usan exclusivamente bytes sintéticos pequeños, SQLite real y directorios
-efímeros dentro del proyecto que se retiran al finalizar. No generan grandes archivos
-ni conexiones externas. Las pruebas de symlinks/junctions simulan la detección para
-no exigir privilegios especiales de Windows; las carreras hostiles y cortes eléctricos
-no están comprobados.
+Las pruebas usan bytes sintéticos, SQLite real y directorios efímeros que se retiran
+al finalizar. Las pruebas de configuración e inspección se aíslan fuera del checkout;
+otras pruebas históricas usan temporales dentro del proyecto. No hay conexiones
+externas. Hay pruebas de detección de enlaces simulada y sondas adicionales de
+symlinks/junctions reales en Windows. Las carreras hostiles y cortes eléctricos
+no están comprobados. Las pruebas previas del PASO 62 y SUADC-01/02 se conservan.
 
 ```powershell
 & .\.venv\Scripts\python.exe -B -m unittest discover -s tests -v
 & .\.venv\Scripts\python.exe -B -m pip check
 ```
+
+Verificación del PASO 62-D con Python 3.15.1, HTTPX 0.28.1 y SQLite 3.53.4:
+439 pruebas aprobadas (402 anteriores + 37 nuevas), 0 fallidas y 0 con errores;
+suite completa en 41.285 s. `pip check`: `No broken requirements found.`;
+`git diff --check`: código 0, con avisos de conversión LF/CRLF. Las seis regresiones
+básicas se ejecutaron antes de corregir el código y fallaron de la forma esperada.
+Los archivos de las 30 pruebas del PASO 62 y de las 39 regresiones SUADC-01/02
+permanecen intactos. No se inicializó almacenamiento permanente ni hubo descargas,
+conexiones externas, migraciones operativas, commits o push.

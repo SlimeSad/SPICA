@@ -67,9 +67,12 @@ mismos bytes sin transformación.
 ## Errores
 
 `ErrorTransporteHTTP` expone `tipo` y, para estados rechazados, `codigo_http`.
-No guarda el cuerpo de error ni incluye URL o parámetros en su mensaje. Conserva
-la excepción HTTPX como causa: no registrar indiscriminadamente trazas que puedan
-contener datos sensibles.
+No guarda el cuerpo de error ni incluye URL o parámetros en su mensaje. `get()` y
+`descargar()` publican un objeto nuevo con categoría, código, fase e historial,
+sin causas/contextos ni notas del backend. Para registros estructurados usar
+`diagnostico_publico()`. Esto no garantiza borrar secretos de la memoria ni permite
+registrar variables locales indiscriminadamente. Detalles y regresiones en
+[PASO 62-B](correcciones_auditoria_altas.md).
 
 - 401: no autenticado; 403: prohibido; 404: no encontrado.
 - 429: límite de solicitudes; la política optativa de reintentos interpreta Retry-After.

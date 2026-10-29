@@ -52,6 +52,39 @@ class ErrorTransporteHTTP(Exception):
         self.intentos = 0
         self.agotados = False
         self.historial = ()
+        self.fase: str | None = None
+
+    def diagnostico_publico(self) -> dict:
+        """Campos técnicos permitidos; no serializa requests, frames ni cabeceras."""
+        return {"tipo": self.tipo.value, "codigo_http": self.codigo_http,
+                "fase": self.fase, "intentos": self.intentos, "agotados": self.agotados,
+                "recuperable": self.recuperable}
+
+
+def _error_publico(interno: ErrorTransporteHTTP, fase: str) -> ErrorTransporteHTTP:
+    # No propagar el objeto original: puede conservar causas, notas y traceback
+    # de HTTPX, del sistema operativo o del backend TLS.
+    from .descargas import ErrorDescargaArchivo
+    if isinstance(interno, ErrorDescargaArchivo):
+        publico = ErrorDescargaArchivo(interno.tipo, interno.informe)
+    else:
+        publico = ErrorTransporteHTTP(interno.tipo, "Fallo HTTP: " + interno.tipo.value,
+                                     interno.codigo_http)
+    for atributo in ("recuperable", "espera_servidor", "intentos", "agotados", "historial"):
+        setattr(publico, atributo, getattr(interno, atributo))
+    publico.fase = fase
+    return publico
+
+
+def _publicar_error(error: Exception):
+    # Python adjunta automáticamente el contexto activo incluso con `from None`.
+    # Capturamos nuestro error nuevo y retiramos esa referencia antes del bare raise.
+    try:
+        raise error from None
+    except Exception:
+        error.__cause__ = None
+        error.__context__ = None
+        raise
 
 
 @dataclass(frozen=True)
@@ -84,8 +117,12 @@ class RespuestaHTTP:
 def _url_autorizable(valor: str) -> httpx.URL:
     try:
         url = httpx.URL(valor)
-    except (httpx.InvalidURL, TypeError) as exc:
-        raise ValueError("URL inválida") from exc
+    except (httpx.InvalidURL, TypeError):
+        publico = ValueError("URL inválida")
+    else:
+        publico = None
+    if publico is not None:
+        _publicar_error(publico)
     if (url.scheme not in ("http", "https") or not url.host
             or url.userinfo or url.fragment):
         raise ValueError("Se requiere URL HTTP(S) absoluta, sin credenciales ni fragmento")
@@ -180,7 +217,11 @@ class ClienteHTTP:
         self._gestor.cancelacion.set()
 
     def get(self, url: str, *, parametros: Mapping[str, str] | None = None) -> RespuestaHTTP:
-        return self._gestor.ejecutar_get(lambda: self._get_una_vez(url, parametros=parametros))
+        try:
+            return self._gestor.ejecutar_get(lambda: self._get_una_vez(url, parametros=parametros))
+        except ErrorTransporteHTTP as interno:
+            publico = _error_publico(interno, "get")
+        _publicar_error(publico)
 
     def _get_una_vez(self, url: str, *, parametros: Mapping[str, str] | None) -> RespuestaHTTP:
         with self._abrir(url, parametros, self.configuracion.max_bytes_respuesta) as (respuesta, esperado):
@@ -197,9 +238,13 @@ class ClienteHTTP:
     ) -> "InformeDescarga":
         """Descarga a staging controlado; no confirma ni almacena un original RAW."""
         from .descargas import descargar_archivo
-        return self._gestor.ejecutar_get(lambda: descargar_archivo(
-            self, url, directorio, nombre, max_bytes=max_bytes,
-            tamano_bloque=tamano_bloque, parametros=parametros))
+        try:
+            return self._gestor.ejecutar_get(lambda: descargar_archivo(
+                self, url, directorio, nombre, max_bytes=max_bytes,
+                tamano_bloque=tamano_bloque, parametros=parametros))
+        except ErrorTransporteHTTP as interno:
+            publico = _error_publico(interno, "descargar")
+        _publicar_error(publico)
 
     @contextmanager
     def _abrir(

@@ -9,6 +9,7 @@ from ..nucleo import Fuente
 from .modelos import (ActivoRAW, DeclaracionRAW, EstadoIncorporacion, ErrorAlmacenamientoRAW,
                       ObjetoCientifico, ProyectoCientifico)
 from .migraciones import migrar_a_v2
+from .inspeccion import SQL_CREAR_V1, inspeccionar_catalogo
 
 
 def ahora() -> str:
@@ -16,38 +17,29 @@ def ahora() -> str:
 
 
 class CatalogoRAW:
-    def __init__(self, ruta: Path):
-        self.conexion = sqlite3.connect(ruta, timeout=5)
+    def __init__(self, ruta: Path, *, politica_inspeccion=None):
+        ruta = Path(ruta).absolute()
+        nuevo = False
+        if ruta.exists():
+            inspeccionar_catalogo(ruta, politica=politica_inspeccion)
+        else:
+            if any(Path(str(ruta) + sufijo).exists() for sufijo in ("-wal", "-shm", "-journal")):
+                raise ErrorAlmacenamientoRAW("auxiliares_sin_catalogo_requieren_revision")
+            # La creación es exclusiva y distinta de la inspección. Un archivo
+            # vacío preexistente no se adopta como un catálogo nuevo.
+            with ruta.open("xb"):
+                pass
+            nuevo = True
+        # mode=rw evita crear otra base si desaparece la ruta tras la inspección.
+        self.conexion = sqlite3.connect(ruta.resolve().as_uri() + "?mode=rw", uri=True, timeout=5)
         self.conexion.row_factory = sqlite3.Row
         try:
             self.conexion.execute("PRAGMA foreign_keys=ON")
             self.conexion.execute("PRAGMA synchronous=FULL")
-            self.conexion.execute("PRAGMA journal_mode=DELETE")
-            version = self.conexion.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, 2):
-                raise ErrorAlmacenamientoRAW("version_catalogo_no_admitida")
-            if version == 0:
-                if self.conexion.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchone():
-                    raise ErrorAlmacenamientoRAW("catalogo_ajeno")
-                self.conexion.executescript("""
-                    BEGIN IMMEDIATE;
-                    CREATE TABLE proyectos (id TEXT PRIMARY KEY);
-                    CREATE TABLE objetos (id TEXT PRIMARY KEY, proyecto_id TEXT NOT NULL REFERENCES proyectos(id));
-                    CREATE TABLE activos (
-                        id TEXT PRIMARY KEY, objeto_id TEXT NOT NULL REFERENCES objetos(id),
-                        declaracion TEXT NOT NULL, fecha_utc TEXT NOT NULL,
-                        estado TEXT NOT NULL CHECK(estado IN ('preparada','verificada_localmente',
-                          'incorporada','fallida','inconsistente')),
-                        tamano INTEGER CHECK(tamano >= 0), sha256 TEXT, ruta_interna TEXT,
-                        error TEXT, advertencias TEXT NOT NULL, comprobacion_utc TEXT
-                    );
-                    CREATE TABLE eventos (
-                        secuencia INTEGER PRIMARY KEY, activo_id TEXT NOT NULL REFERENCES activos(id),
-                        fecha_utc TEXT NOT NULL, estado TEXT NOT NULL, codigo TEXT
-                    );
-                    PRAGMA user_version=1;
-                    COMMIT;
-                """)
+            if nuevo:
+                self.conexion.execute("PRAGMA journal_mode=DELETE")
+                self.conexion.executescript("BEGIN IMMEDIATE;" + SQL_CREAR_V1
+                                           + "PRAGMA user_version=1;COMMIT;")
                 # Solo el catálogo recién creado, sin datos, evoluciona automáticamente.
                 migrar_a_v2(self.conexion)
         except BaseException:
