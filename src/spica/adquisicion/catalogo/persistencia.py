@@ -279,6 +279,49 @@ class CatalogoCientifico:
     def _listar(self, tabla):
         return tuple(_entidad(tabla, f[0]) for f in self._conexion.execute(f"SELECT contenido FROM {tabla} ORDER BY rowid"))
 
+    def leer_acotado(self, filtro: FiltroCatalogo, *, max_registros: int,
+                     max_bytes: int) -> tuple[RegistroCatalogo, ...]:
+        """Instantánea limitada para planificación; solo filtra fuente/producto.
+
+        Cuenta registros y bytes UTF-8 antes de deserializar. No modifica el
+        esquema ni descarta evidencia por filtros de estación, tiempo o frecuencia.
+        """
+        if not isinstance(filtro, FiltroCatalogo):
+            raise TypeError("Se requiere FiltroCatalogo")
+        if any(type(v) is not int or v <= 0 for v in (max_registros, max_bytes)):
+            raise ValueError("Limites positivos requeridos")
+        tablas = ("productos", "estaciones", "variables", "disponibilidades", "capacidades")
+        condiciones, valores = [], []
+        if filtro.fuentes:
+            condiciones.append("(" + " OR ".join("(proveedor=? AND fuente_id=?)" for _ in filtro.fuentes) + ")")
+            for fuente in filtro.fuentes:
+                valores.extend((fuente.proveedor, fuente.identificador))
+        if filtro.productos:
+            condiciones.append("producto_id IN (" + ",".join("?" for _ in filtro.productos) + ")")
+            valores.extend(filtro.productos)
+        donde = " WHERE " + " AND ".join(condiciones) if condiciones else ""
+        if self._conexion.in_transaction:
+            raise ErrorCatalogo("lectura_acotada_requiere_conexion_sin_transaccion")
+        self._conexion.execute("BEGIN")
+        try:
+            cantidad = volumen = 0
+            for tabla in tablas:
+                n, b = self._conexion.execute(
+                    f"SELECT count(*),coalesce(sum(length(CAST(contenido AS BLOB))),0) FROM {tabla}" + donde,
+                    valores).fetchone()
+                cantidad += n
+                volumen += b
+                if cantidad > max_registros or volumen > max_bytes:
+                    raise ErrorCatalogo("limite_lectura_catalogo_excedido")
+            registros = []
+            for tabla in tablas:
+                for fila in self._conexion.execute(
+                        f"SELECT contenido,revision FROM {tabla}" + donde + " ORDER BY contenido", valores):
+                    registros.append(RegistroCatalogo(_entidad(tabla, fila["contenido"]), fila["revision"]))
+            return tuple(registros)
+        finally:
+            self._conexion.rollback()
+
     def listar(self, tipo: type, *, fuente: Fuente | None = None,
                producto_id: str | None = None) -> tuple[RegistroCatalogo, ...]:
         """Explora metadatos registrados; una colección vacía no prueba ausencia de datos."""
