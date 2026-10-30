@@ -109,9 +109,11 @@ class CatalogoRAW:
             raise ErrorAlmacenamientoRAW("activo_no_encontrado", activo_id)
         return json.loads(fila[0]).get("_evidencia_adquisicion")
 
-    def activo_de_adquisicion(self, adquisicion_id: str):
+    def activo_de_adquisicion(self, adquisicion_id: str, *, permitir_ausente=False):
         filas = self.conexion.execute("""SELECT id FROM activos WHERE
             json_extract(declaracion,'$._evidencia_adquisicion.adquisicion_id')=?""", (adquisicion_id,)).fetchall()
+        if not filas and permitir_ausente:
+            return None
         if len(filas) != 1:
             raise ErrorAlmacenamientoRAW("adquisicion_no_identificada_o_ambigua")
         return filas[0][0]

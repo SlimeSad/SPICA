@@ -100,6 +100,9 @@ def empaquetar(documento, declaracion, url_solicitada, http_comprobada_utc, cons
 def desempaquetar(datos, activo):
     from ..almacenamiento import ErrorAlmacenamientoRAW
     try:
+        if type(datos.get("version")) is int and datos["version"] == 2 and datos.get("mecanismo") == "importacion_manual":
+            from ..manual.evidencias import desempaquetar_manual
+            return desempaquetar_manual(datos, activo)
         if type(datos["version"]) is not int or datos["version"] != 1 or not re.fullmatch(r"[0-9a-f]{32}", datos["adquisicion_id"]):
             raise ValueError
         from .persistencia import _leer_json

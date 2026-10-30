@@ -428,6 +428,14 @@ descriptor que impida modificaciones posteriores a la comprobación.
 
 ## Decisiones abiertas
 
+El [PASO 79: ingesta manual documentada](ingesta_manual.md) añade un recibo MANUAL
+v2 en el diario JSON existente y una entrada que delega en la incorporación RAW.
+No modifica el esquema SQLite ni migra almacenes. Las consultas de evidencia ahora
+pueden devolver un recibo manual o la evidencia HTTP anterior; el llamador debe
+distinguirlos. La integridad local y la procedencia declarada siguen separadas de
+la autenticidad institucional y la validación científica. El uso permanece
+experimental, secuencial y sujeto a directorios privados previamente preparados.
+
 - Revisar vocabularios de family/kind/estados y el alcance global de IDs al disponer
   de especificaciones adicionales de MD-01/02/03.
 - Política de recuperación, cuarentena, huérfanos, respaldo/migración y retención.

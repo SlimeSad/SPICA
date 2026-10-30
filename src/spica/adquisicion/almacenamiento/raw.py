@@ -19,6 +19,7 @@ from .modelos import (ActivoRAW, ComprobacionRAW, DeclaracionRAW, DiagnosticoRAW
 
 if TYPE_CHECKING:
     from ..catalogo import EvidenciaDocumental, EvidenciaAdquisicion
+    from ..manual.modelos import ProcedenciaManual, ReciboIngestaManual
 
 
 def _segura(ruta: Path) -> Path:
@@ -290,7 +291,29 @@ class AlmacenRAW:
         from ._errores import _publicar
         _publicar(publico)
 
-    def consultar_evidencia(self, activo_id: str) -> "EvidenciaAdquisicion | None":
+    def incorporar_manual_documentado(self, entrada: Path, declaracion: DeclaracionRAW,
+                                      documento: "ProcedenciaManual", *, adquisicion_id: str,
+                                      tamano_esperado: int, sha256_esperado: str) -> ActivoRAW:
+        """Incorporación existente con recibo MANUAL; sin prueba HTTP ni DDL nuevo."""
+        try:
+            from ..manual.evidencias import empaquetar_manual
+            paquete = empaquetar_manual(documento, declaracion, adquisicion_id)
+            if self.consultar_adquisicion(adquisicion_id, permitir_ausente=True) is not None:
+                raise ErrorAlmacenamientoRAW("adquisicion_manual_ya_registrada")
+            if tamano_esperado is None or sha256_esperado is None:
+                raise ValueError("Continuidad física requerida")
+            if documento.sha256_externo is not None and documento.sha256_externo != sha256_esperado:
+                raise ErrorAlmacenamientoRAW("hash_externo_discrepante")
+            return self._incorporar(entrada, declaracion, tamano_esperado=tamano_esperado,
+                                    sha256_esperado=sha256_esperado, evidencia=paquete)
+        except Exception as exc:
+            publico = ErrorAlmacenamientoRAW(
+                exc.codigo if isinstance(exc, ErrorAlmacenamientoRAW) else "incorporacion_manual_no_disponible",
+                getattr(exc, "activo_id", None))
+        from ._errores import _publicar
+        _publicar(publico)
+
+    def consultar_evidencia(self, activo_id: str) -> "EvidenciaAdquisicion | ReciboIngestaManual | None":
         """Solo metadatos persistidos; usar recuperar() para una nueva lectura física."""
         try:
             from ..catalogo.evidencias import desempaquetar
@@ -303,11 +326,15 @@ class AlmacenRAW:
         from ._errores import _publicar
         _publicar(publico)
 
-    def consultar_adquisicion(self, adquisicion_id: str) -> "EvidenciaAdquisicion":
+    def consultar_adquisicion(self, adquisicion_id: str, *, permitir_ausente: bool = False
+                             ) -> "EvidenciaAdquisicion | ReciboIngestaManual | None":
         try:
+            if type(permitir_ausente) is not bool:
+                raise TypeError("Política de consulta requerida")
             if not isinstance(adquisicion_id, str) or not re.fullmatch(r"[0-9a-f]{32}", adquisicion_id):
                 raise ErrorAlmacenamientoRAW("identificador_adquisicion_invalido")
-            return self.consultar_evidencia(self._catalogo.activo_de_adquisicion(adquisicion_id))
+            activo_id = self._catalogo.activo_de_adquisicion(adquisicion_id, permitir_ausente=permitir_ausente)
+            return None if activo_id is None else self.consultar_evidencia(activo_id)
         except Exception as exc:
             codigo = exc.codigo if isinstance(exc, ErrorAlmacenamientoRAW) else "evidencia_no_disponible"
             publico = ErrorAlmacenamientoRAW(codigo)
