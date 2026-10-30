@@ -75,10 +75,11 @@ def _json_acotado(cuerpo, limites, cancelacion, progreso):
     _cancelar(cancelacion)
     progreso["estado_json"] = EstadoJSON.PARCIAL
     texto = cuerpo.decode("utf-8-sig")
-    # Prelectura de seguridad, no parser: json.loads valida TODA la gramática.
-    # La suma sobreestima los nodos (contenedores, claves y valores): cada '['
-    # reserva además un primer elemento; ':' reserva un valor y ',' otro hijo.
-    pila, unidades, cadena, escape = [], 0, False, False
+    # Presupuesto léxico, no parser: json.loads valida TODA la gramática.
+    # Para JSON válido cada apertura de contenedor/cadena y cada inicio de
+    # primitivo representa un nodo (incluidas claves). La puntuación no añade
+    # nodos: evita contar otra vez valores ya reservados por ':' o por ','.
+    pila, unidades, cadena, escape, primitivo = [], 0, False, False, False
     for i, c in enumerate(texto):
         if i % 4096 == 0:
             _cancelar(cancelacion)
@@ -91,24 +92,32 @@ def _json_acotado(cuerpo, limites, cancelacion, progreso):
                 cadena = False
         elif c == '"':
             cadena = True
+            primitivo = False
             unidades += 1
         elif c in "[{":
             pila.append([c, 1])
-            unidades += 2 if c == "[" else 1
+            unidades += 1
+            primitivo = False
             progreso["profundidad_maxima"] = max(progreso["profundidad_maxima"], len(pila))
             _presupuesto(len(pila) <= limites.profundidad, "json_demasiado_profundo")
         elif c in "]}":
             _exigir(pila and pila[-1][0] == ("[" if c == "]" else "{"),
                      "json_malformado_o_no_admitido")
             pila.pop()
+            primitivo = False
         elif c == ",":
-            unidades += 1
+            primitivo = False
             if pila:
                 pila[-1][1] += 1
                 tope = limites.elementos_lista if pila[-1][0] == "[" else limites.propiedades_objeto
                 _presupuesto(pila[-1][1] <= tope, "json_demasiados_elementos")
         elif c == ":":
+            primitivo = False
+        elif c in " \t\r\n":
+            primitivo = False
+        elif not primitivo:
             unidades += 1
+            primitivo = True
         progreso["unidades_prelectura"] = unidades
         _presupuesto(unidades <= limites.unidades_documento, "json_presupuesto_documento_agotado")
     def pares(items):
@@ -140,7 +149,7 @@ def _json_acotado(cuerpo, limites, cancelacion, progreso):
 _COMUNES = {"currentVersion", "maxRecordCount", "supportedQueryFormats", "capabilities", "advancedQueryCapabilities"}
 _SERVICIO = _COMUNES | {"mapName", "serviceName", "layers", "spatialReference", "fullExtent", "units"}
 _CAPA = _COMUNES | {"id", "name", "type", "geometryType", "extent", "spatialReference", "fields",
-                   "objectIdField", "objectIdFieldName"}
+                   "sourceSpatialReference", "objectIdField", "objectIdFieldName"}
 
 
 def _seleccionar(d, tipo, limites, cancelacion, progreso):
@@ -170,6 +179,16 @@ def _extension(e, objetivo):
     _exigir(all(_numero(e.get(k)) for k in ("xmin", "ymin", "xmax", "ymax")), "extension_invalida")
     _exigir(e["xmin"] <= e["xmax"] and e["ymin"] <= e["ymax"], "extension_invertida")
     _referencia(e.get("spatialReference"), objetivo)
+
+
+def _referencia_fuente(d, advertencias):
+    # El origen nativo y la representación de extent pueden usar CRS distintos.
+    # Se comprueban identificadores declarados, sin certificar sus definiciones.
+    _exigir(type(d) is dict, "referencia_fuente_invalida")
+    _exigir(_entero(d.get("wkid"), 1), "wkid_fuente_ausente_o_invalido")
+    if "latestWkid" in d:
+        _exigir(_entero(d["latestWkid"], 1), "latest_wkid_fuente_invalido")
+    advertencias.append("crs_fuente_sin_comprobacion_de_definicion_autoritativa")
 
 
 def _esquema(d, tipo, objetivo, advertencias):
@@ -223,6 +242,8 @@ def _esquema(d, tipo, objetivo, advertencias):
     _extension(d.get("extent"), objetivo)
     if "spatialReference" in d:
         _referencia(d["spatialReference"], objetivo)
+    if "sourceSpatialReference" in d:
+        _referencia_fuente(d["sourceSpatialReference"], advertencias)
     campos = d.get("fields")
     _exigir(type(campos) is list and 0 < len(campos) <= 2048, "campos_ausentes_o_excesivos")
     nombres, oids = set(), []

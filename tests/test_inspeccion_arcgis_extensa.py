@@ -139,7 +139,8 @@ class InspectorExtensoTests(unittest.TestCase):
 
     def test_agotamiento_global_antes_de_materializar_json(self):
         d = capa()
-        d["opcional"] = [{"a": 0, "b": 0, "c": 0, "d": 0, "e": 0}] * 10_000
+        # 132.141 nodos: excede el presupuesto también con el conteo exacto.
+        d["opcional"] = [{"a": 0, "b": 0, "c": 0, "d": 0, "e": 0}] * 12_000
         cuerpo = codificar(d)
         self.assertLess(len(cuerpo), LIMITE_METADATOS)
         with patch("spica.adquisicion.inspeccion_arcgis.inspector.json.loads", side_effect=AssertionError):

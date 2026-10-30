@@ -4,6 +4,17 @@
 Véanse el [expediente y sus evidencias E-01/E-02](expediente_ingemmet_geologia_50k.md)
 y el [plan del PASO 82](plan_validacion_ingemmet_paso82.md).
 
+**Estado más reciente, PASO 82-D:** validación offline completa de metadatos
+esenciales del primario del PASO 82-C, sin red ni ampliación de topes. Sintaxis
+completa, 131.042 nodos, 680 esenciales. Dictamen **APTO CON RESTRICCIONES**;
+véase la [sección 10](#10-diagnóstico-y-validación-offline-del-paso-82-d).
+
+**Antecedente al cierre del PASO 82-C:** un único GET de capa, HTTP 200 y 983.697 bytes
+conservados/releídos físicamente fuera de Git. La prelectura se detuvo al superar
+131.072 unidades; JSON y esquema de capa siguen **PENDIENTES**. Véase la
+[sección 9](#9-revalidación-controlada-del-paso-82-c). Las secciones previas
+conservan sus antecedentes por paso; no son nueva confirmación de capa.
+
 **Actualización del PASO 82:** el servicio se leyó y validó; la transferencia HTTP
 de capa terminó, pero su inspección se detuvo por complejidad JSON. Las secciones
 1–6 conservan el balance histórico del PASO 81. El estado observado posterior,
@@ -197,3 +208,61 @@ Una futura validación necesita revisión y autorización de **un solo GET de ca
 sin repetir el servicio ni usar fixtures como evidencia institucional. Si no existe
 contexto primario de servicio conservado, se dejará el contraste entre respuestas
 sin comprobar. Condiciones y preservación de evidencia: sección 15 del informe.
+
+## 9. Revalidación controlada del PASO 82-C
+
+E-05: [informe del único GET y evidencia conservada](validacion_metadatos_ingemmet_paso82.md#17-paso-82-c-preparación-y-alcance-del-ensayo).
+30 de octubre de 2026, inicio `20:14:58.525392Z`, fin HTTP `20:15:01.319357Z`.
+Solo se solicitó la ruta de capa 7 con `f=json`; no se repitió el servicio ni se
+consultaron entidades. No se modificaron código, presupuestos o catálogos.
+
+| Capacidad / propiedad | Evidencia actual | Límite |
+|---|---|---|
+| Transferencia de metadatos de capa | HTTP 200, MIME `application/json; charset=UTF-8`, 983.697 bytes completos según transporte | No demuestra sintaxis JSON ni semántica ArcGIS |
+| Content-Length | No proporcionado | No convertir tamaño local en declaración del servidor |
+| Evidencia primaria | `capa7.json` conservado en directorio privado del informe; cierre, reapertura y comparación exacta/hash | Integridad local, sin firma ni autenticidad institucional independiente |
+| SHA-256 físico | `21f85c366686bcfe08a102abf775e0edc05de1fe30f567a73ec98cbf3aa80e39` | Coincide con la huella histórica de capa; no hay dos originales para comparación física |
+| Inspector corregido | `revision_necesaria`, JSON parcialmente inspeccionado, inspección incompleta | Se alcanzaron 131.073 unidades; parser/esquema no ejecutados; no se aumentó el presupuesto |
+| ID/nombre, campos/tipos, OID, geometría, CRS, extensión | **Pendientes** en el cuerpo real de capa | No completar desde objetivos, anuncios del servicio o fixtures |
+| MaxRecordCount, formatos, capacidades y paginación de capa | **Pendientes** | Los valores anteriores pertenecían al servicio; no se probó funcionamiento de consultas |
+| Coherencia servicio/capa | No comprobada de forma completa | Primario del servicio ausente y fechas distintas; no se volvió a pedir |
+| Derechos / significado geológico | Pendientes | Acceso público y hash no acreditan licencia, edición, escala/precisión ni validez científica |
+| Red / almacenamiento operativo | Un GET, un DNS, un TCP; cero accesos operativos registrados | No hay autorización implícita de otra consulta o adquisición RAW |
+
+La prueba mejora la conservación de evidencia, pero no habilita diseño o adquisición
+vectorial. **REQUIERE CORRECCIONES**: revisar offline el manejo de complejidad sobre
+el primario conservado, con autorización y pruebas, antes de promover propiedades
+de capa a comprobadas. No se atribuye el exceso a una sección sin demostrarlo.
+No se programó un conector GIS ni se descargaron polígonos.
+
+## 10. Diagnóstico y validación offline del PASO 82-D
+
+E-06: [diagnóstico e inspección final del archivo](validacion_metadatos_ingemmet_paso82.md#22-paso-82-d-integridad-y-diagnóstico-instrumental-offline).
+Medición instrumental completa a `2026-10-30T20:34:11.997344Z`; evaluación final
+offline a `20:43:25.499524Z`. Primario de E-05 abierto solo para lectura, mismo
+tamaño **983.697 bytes** y SHA-256
+`21f85c366686bcfe08a102abf775e0edc05de1fe30f567a73ec98cbf3aa80e39`.
+Los cinco controles históricos también permanecen intactos; no hubo nuevos GET.
+
+| Propiedad | Comprobación en E-06 | Límite de la afirmación |
+|---|---|---|
+| Complejidad | Heurística completa anterior: 218.540; árbol: 131.042 nodos | 131.073 era un corte; no un total |
+| Estructura responsable | `drawingInfo` concentra 130.218 nodos; grupos/clases y `uniqueValueInfos` | No se evaluó la semántica de simbología ni se deduplicaron representaciones |
+| Corrección local | Prelectura mide nodos, igual que recorrido posterior; topes numéricos sin cambios | Umbral 131.072, margen de solo 30; sin nuevo parser de gramática |
+| Resultado | A: sintaxis completa y propiedades esenciales comprobadas, 680 nodos esenciales | No equivale a toda la semántica ArcGIS o a calidad geológica |
+| Identidad / geometría | `id=7`, `name=Litologia`, `type=Feature Layer`, `geometryType=esriGeometryPolygon` | Declaraciones de metadatos; sin entidades, topología o cobertura verificadas |
+| CRS de origen | `sourceSpatialReference` declara 4326 / 4326 | Estructura de identificadores comprobada; definición autoritativa/datum/ejes pendientes |
+| CRS de extensión | 102100 / 3857; extensión finita/ordenada en el informe | Ámbito distinto del origen; no certifica CRS de futuras respuestas de consulta |
+| Unidades | Sin `units` raíz; `geometryProperties.units=esriDecimalDegrees`, `mapUnits.uwkid=9102` observados instrumentalmente | No trasladar la declaración secundaria a la extensión ni a cálculos; precisión y conversiones pendientes |
+| Campos | 39 descriptores; ocho prioritarios presentes, nombres/tipos/alias/longitudes en informe | Sin interpretación geológica de códigos o nulabilidad inventada |
+| OID | `objectid`, único tipo `esriFieldTypeOID`; propiedades OID raíz no proporcionadas | Sin estabilidad histórica o identidad global de entidad probadas |
+| Consulta | Anuncia MaxRecordCount 2000, `JSON, geoJSON, PBF`, `Map,Query,Data` y paginación `true` | Sin prueba funcional ni total de entidades |
+| Servicio/capa | Se mantiene `None` para contraste completo | Falta primario del servicio; fechas y ámbitos distintos, sin inferir publicación inmutable |
+| Derechos / ciencia | Sin nueva acreditación | Licencia, diccionario, escala/precisión, edición y validez científica pendientes |
+
+Se conserva la historia de E-04/E-05: sus cortes e incertidumbres eran reales en
+esos pasos y no se reescriben como éxitos anteriores. E-06 aporta una inspección
+posterior del mismo archivo, no una nueva descarga o verificación de disponibilidad.
+**APTO CON RESTRICCIONES** para revisar diseño GIS; no hay conector vectorial ni
+permiso implícito para recuperar entidades. El próximo incremento deberá separar
+CRS de origen/representación/salida y definir identidad, límites y completitud.

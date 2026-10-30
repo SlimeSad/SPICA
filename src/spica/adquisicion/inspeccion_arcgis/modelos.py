@@ -38,8 +38,9 @@ class AlcanceMetadatos(Enum):
 class LimitesInspeccion:
     """Solo permite reducir los topes locales; no cambia el límite HTTP.
 
-    131072 unidades = presupuesto orientativo de 32 MiB / 256 bytes por
-    unidad estructural. No constituye una reserva ni un límite de RSS.
+    Se conservan 131072 apariciones de nodos (contenedores, claves y valores).
+    La prelectura y el recorrido usan esa misma medida desde el PASO 82-D.
+    El modelo orientativo de 32 MiB / 256 bytes por nodo no es límite de RSS.
     """
 
     unidades_documento: int = 131_072
