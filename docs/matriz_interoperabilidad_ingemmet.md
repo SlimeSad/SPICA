@@ -4,6 +4,11 @@
 Véanse el [expediente y sus evidencias E-01/E-02](expediente_ingemmet_geologia_50k.md)
 y el [plan del PASO 82](plan_validacion_ingemmet_paso82.md).
 
+**Actualización del PASO 82:** el servicio se leyó y validó; la transferencia HTTP
+de capa terminó, pero su inspección se detuvo por complejidad JSON. Las secciones
+1–6 conservan el balance histórico del PASO 81. El estado observado posterior,
+con sus límites, figura en la [sección 7](#7-actualización-observada-en-el-paso-82).
+
 ## 1. Estados de evidencia
 
 | Estado | Significado y alcance |
@@ -139,3 +144,32 @@ límites de confianza actuales siguen vigentes.
 
 La viabilidad es **condicionada para un piloto de metadatos**, no demostrada para
 adquisición vectorial. No se ha probado conexión ni funcionalidad institucional.
+
+## 7. Actualización observada en el PASO 82
+
+E-04: [informe del ensayo real](validacion_metadatos_ingemmet_paso82.md),
+30 de octubre de 2026, entre `09:23:12.879413Z` y `09:23:15.625737Z`.
+Exactamente dos GET con `f=json`, uno por ruta, ambos HTTP 200. No hubo consultas
+de entidades. SHA-256 y resúmenes proceden de cuerpos recibidos completamente en
+memoria; no se archivaron respuestas completas ni se verificaron archivos en disco.
+
+| Capacidad/propiedad | Estado respaldado por E-04 | Límite pendiente |
+|---|---|---|
+| Acceso al servicio | Comprobada en SPICA: 3.663 bytes, JSON y esquema mínimos coherentes | Solo esa ruta/fecha; no disponibilidad futura ni autenticidad independiente |
+| Referencia de capa | Comprobada en SPICA como anuncio del servicio: ID `7`, nombre `Litologia` | La respuesta de capa requiere revisión; no promueve sus campos a comprobados |
+| Acceso HTTP a capa 7 | Comprobada en SPICA la transferencia de 983.697 bytes y HTTP 200 | `json_demasiados_elementos`; JSON/esquema de capa no validados |
+| CRS del servicio | Documentado por respuesta de la fuente y observado localmente: `wkid=102100`, `latestWkid=3857`, unidades `esriMeters` | No confirma CRS de capa, datum/ejes, definición autoritativa o precisión |
+| Extensión | `fullExtent` declarado del servicio, valores en E-04 | No prueba cobertura exhaustiva ni extensión de entidades/capa |
+| MaxRecordCount | `2000`, documentado/observado en servicio | No es total de entidades; valor de capa pendiente |
+| Formatos | Servicio anuncia `JSON, geoJSON, PBF` | Solo se ejerció lectura JSON de metadatos; no GeoJSON, PBF ni vectores |
+| Capacidades | Servicio anuncia `Map,Query,Data` | No se ejercieron consultas de entidades, exportaciones o mapas |
+| Paginación | El servicio examinado no anuncia `supportsPagination`; la identificación externa sobre capa sigue pendiente | No inferir falta de soporte ni probarla mediante nuevas peticiones |
+| Geometría, atributos y OID | Identificación externa E-01, sin nueva verificación local de capa | Detención por complejidad antes del esquema; no rellenar desde fixtures |
+| Inspector local | Implementación mínima de metadatos, 44 pruebas sintéticas; suite completa 1.105 aprobadas | No valida vectores; necesita revisión offline para metadatos de capa extensos |
+| Versiones | `currentVersion=11.2`, `documentInfo.Version=3.2.0` observados | No son una edición geológica demostrada |
+| Derechos/autoría | Campos examinados insuficientes; `copyrightText` y autor vacíos | Licencia, atribución y permisos de adquisición/redistribución desconocidos |
+
+Estado final: **REQUIERE CORRECCIONES/revisión antes de validar capa o consultar
+entidades**. El presupuesto de dos GET se agotó sin reintentos; no se ampliaron
+límites. Se conserva la historia anterior, sin afirmar que todo INGEMMET carece
+de capacidades ni atribuir completitud a una respuesta HTTP íntegra.
