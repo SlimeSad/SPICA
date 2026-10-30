@@ -21,6 +21,51 @@ class EstadoMetadatos(Enum):
     REVISION = "revision_necesaria"
 
 
+class EstadoJSON(Enum):
+    NO_INICIADO = "json_no_inspeccionado"
+    PARCIAL = "json_parcialmente_inspeccionado"
+    COMPLETO = "json_completamente_validado"
+    INVALIDO = "json_invalido"
+
+
+class AlcanceMetadatos(Enum):
+    ESENCIALES = "propiedades_esenciales_comprobadas"
+    INCOMPLETO = "inspeccion_incompleta"
+    INVALIDO = "respuesta_invalida"
+
+
+@dataclass(frozen=True)
+class LimitesInspeccion:
+    """Solo permite reducir los topes locales; no cambia el límite HTTP.
+
+    131072 unidades = presupuesto orientativo de 32 MiB / 256 bytes por
+    unidad estructural. No constituye una reserva ni un límite de RSS.
+    """
+
+    unidades_documento: int = 131_072
+    nodos_esenciales: int = 20_000
+    profundidad: int = 32
+    elementos_lista: int = 20_000
+    propiedades_objeto: int = 4096
+    caracteres_cadena: int = 65_536
+
+    def __post_init__(self):
+        for nombre, tope in (("unidades_documento", 131_072), ("nodos_esenciales", 20_000),
+                             ("profundidad", 32), ("elementos_lista", 20_000),
+                             ("propiedades_objeto", 4096), ("caracteres_cadena", 65_536)):
+            valor = getattr(self, nombre)
+            if type(valor) is not int or not 1 <= valor <= tope:
+                raise ValueError("Presupuesto de inspección no admitido")
+
+
+@dataclass(frozen=True)
+class EstadisticasJSON:
+    unidades_prelectura: int = 0
+    nodos_documento: int = 0
+    profundidad_maxima: int = 0
+    nodos_esenciales: int = 0
+
+
 @dataclass(frozen=True)
 class ObjetivoArcGIS:
     url_servicio: str
@@ -78,10 +123,16 @@ class ValidacionMetadatos:
     estado: EstadoMetadatos
     diagnosticos: tuple[str, ...]
     advertencias: tuple[str, ...]
-    sha256: str
+    sha256: str | None
     bytes_recibidos: int
     campo_oid: str | None = None
     datos: Mapping[str, object] = field(default_factory=dict, repr=False)
+    estado_json: EstadoJSON = EstadoJSON.NO_INICIADO
+    alcance: AlcanceMetadatos = AlcanceMetadatos.INCOMPLETO
+    estadisticas: EstadisticasJSON = field(default_factory=EstadisticasJSON)
+    secciones_omitidas: tuple[str, ...] = field(default=(), repr=False)
+    coherencia_servicio_capa: bool | None = None
+    objetivo: ObjetivoArcGIS | None = field(default=None, repr=False)
 
     def __post_init__(self):
         object.__setattr__(self, "datos", congelar(self.datos))
@@ -103,4 +154,7 @@ class IntentoMetadatos:
 
     @property
     def permite_continuar(self):
-        return self.error is None and self.validacion is not None and self.validacion.estado is EstadoMetadatos.COHERENTE
+        return (self.error is None and self.validacion is not None
+                and self.validacion.estado is EstadoMetadatos.COHERENTE
+                and self.validacion.estado_json is EstadoJSON.COMPLETO
+                and self.validacion.alcance is AlcanceMetadatos.ESENCIALES)

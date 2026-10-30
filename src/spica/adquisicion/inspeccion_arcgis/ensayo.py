@@ -75,7 +75,9 @@ class EnsayoMetadatosArcGIS:
                 longitud = respuesta.cabeceras.get("content-length")
                 longitud = int(longitud) if longitud is not None else None
                 cuerpo = respuesta.contenido
-                validacion = inspeccionar_metadatos(respuesta, tipo, self.objetivo)
+                validacion = inspeccionar_metadatos(respuesta, tipo, self.objetivo,
+                    cancelacion=self.cancelacion,
+                    servicio=self._historial[0].validacion if tipo is TipoMetadatos.CAPA else None)
                 if validacion.estado is not EstadoMetadatos.COHERENTE:
                     error = "validacion_de_metadatos_no_superada"
         except ErrorTransporteHTTP as exc:

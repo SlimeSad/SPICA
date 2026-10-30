@@ -2,7 +2,8 @@
 
 from .modelos import (
     EstadoMetadatos, IntentoMetadatos, LIMITE_METADATOS, ObjetivoArcGIS,
-    TipoMetadatos, ValidacionMetadatos,
+    TipoMetadatos, ValidacionMetadatos, AlcanceMetadatos, EstadoJSON,
+    EstadisticasJSON, LimitesInspeccion,
 )
 from .inspector import inspeccionar_metadatos
 from .ensayo import EnsayoMetadatosArcGIS
@@ -10,4 +11,5 @@ from .ensayo import EnsayoMetadatosArcGIS
 __all__ = [
     "EstadoMetadatos", "IntentoMetadatos", "LIMITE_METADATOS", "ObjetivoArcGIS",
     "TipoMetadatos", "ValidacionMetadatos", "inspeccionar_metadatos", "EnsayoMetadatosArcGIS",
+    "AlcanceMetadatos", "EstadoJSON", "EstadisticasJSON", "LimitesInspeccion",
 ]

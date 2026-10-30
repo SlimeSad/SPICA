@@ -3,15 +3,31 @@
 import hashlib
 import json
 import math
+from threading import Event
 
 from ..transportes import RespuestaHTTP
 from .modelos import (
-    EstadoMetadatos, LIMITE_METADATOS, ObjetivoArcGIS, TipoMetadatos, ValidacionMetadatos,
+    AlcanceMetadatos, EstadisticasJSON, EstadoJSON, EstadoMetadatos, LIMITE_METADATOS,
+    LimitesInspeccion, ObjetivoArcGIS, TipoMetadatos, ValidacionMetadatos,
 )
 
 
 class _Invalido(Exception):
     pass
+
+
+class _Incompleto(_Invalido):
+    pass
+
+
+def _presupuesto(condicion, codigo):
+    if not condicion:
+        raise _Incompleto(codigo)
+
+
+def _cancelar(evento):
+    if evento is not None and evento.is_set():
+        raise _Incompleto("inspeccion_cancelada")
 
 
 def _exigir(condicion, codigo):
@@ -31,11 +47,41 @@ def _numero(valor):
     return type(valor) in (int, float) and math.isfinite(valor)
 
 
-def _json_acotado(cuerpo):
-    _exigir(len(cuerpo) <= LIMITE_METADATOS, "limite_metadatos_excedido")
+def _recorrer(d, limites, cancelacion):
+    """DFS con iteradores: frontera O(profundidad), sin listas de todos los hijos."""
+    pila = [iter((d,))]
+    nodos = 0
+    while pila:
+        try:
+            v = next(pila[-1])
+        except StopIteration:
+            pila.pop()
+            continue
+        nodos += 1
+        if nodos % 256 == 1:
+            _cancelar(cancelacion)
+        if type(v) is dict:
+            # Cada clave cuenta también como nodo; sin copiar claves o valores.
+            pila.append((x for par in v.items() for x in par))
+        elif type(v) is list:
+            pila.append(iter(v))
+        elif type(v) is str:
+            _presupuesto(len(v) <= limites.caracteres_cadena, "json_texto_excesivo")
+        yield nodos
+
+
+def _json_acotado(cuerpo, limites, cancelacion, progreso):
+    _presupuesto(len(cuerpo) <= LIMITE_METADATOS, "limite_metadatos_excedido")
+    _cancelar(cancelacion)
+    progreso["estado_json"] = EstadoJSON.PARCIAL
     texto = cuerpo.decode("utf-8-sig")
-    profundidad, tokens, cadena, escape = 0, 0, False, False
-    for c in texto:
+    # Prelectura de seguridad, no parser: json.loads valida TODA la gramática.
+    # La suma sobreestima los nodos (contenedores, claves y valores): cada '['
+    # reserva además un primer elemento; ':' reserva un valor y ',' otro hijo.
+    pila, unidades, cadena, escape = [], 0, False, False
+    for i, c in enumerate(texto):
+        if i % 4096 == 0:
+            _cancelar(cancelacion)
         if cadena:
             if escape:
                 escape = False
@@ -45,17 +91,28 @@ def _json_acotado(cuerpo):
                 cadena = False
         elif c == '"':
             cadena = True
-            tokens += 1
+            unidades += 1
         elif c in "[{":
-            profundidad += 1
-            tokens += 1
-            _exigir(profundidad <= 32, "json_demasiado_profundo")
+            pila.append([c, 1])
+            unidades += 2 if c == "[" else 1
+            progreso["profundidad_maxima"] = max(progreso["profundidad_maxima"], len(pila))
+            _presupuesto(len(pila) <= limites.profundidad, "json_demasiado_profundo")
         elif c in "]}":
-            profundidad -= 1
+            _exigir(pila and pila[-1][0] == ("[" if c == "]" else "{"),
+                     "json_malformado_o_no_admitido")
+            pila.pop()
         elif c == ",":
-            tokens += 1
-        _exigir(tokens <= 20_000, "json_demasiados_elementos")
+            unidades += 1
+            if pila:
+                pila[-1][1] += 1
+                tope = limites.elementos_lista if pila[-1][0] == "[" else limites.propiedades_objeto
+                _presupuesto(pila[-1][1] <= tope, "json_demasiados_elementos")
+        elif c == ":":
+            unidades += 1
+        progreso["unidades_prelectura"] = unidades
+        _presupuesto(unidades <= limites.unidades_documento, "json_presupuesto_documento_agotado")
     def pares(items):
+        _cancelar(cancelacion)
         d = {}
         for k, v in items:
             _exigir(k not in d, "json_claves_duplicadas")
@@ -71,19 +128,32 @@ def _json_acotado(cuerpo):
         _exigir(math.isfinite(valor), "json_numero_no_finito")
         return valor
     d = json.loads(texto, object_pairs_hook=pares, parse_constant=constante, parse_int=entero, parse_float=decimal)
-    pila, nodos = [d], 0
-    while pila:
-        v = pila.pop()
-        nodos += 1
-        _exigir(nodos <= 20_000, "json_demasiados_elementos")
-        if type(v) is dict:
-            pila.extend(v.keys())
-            pila.extend(v.values())
-        elif type(v) is list:
-            pila.extend(v)
-        elif type(v) is str:
-            _exigir(len(v) <= 65_536, "json_texto_excesivo")
+    del texto
+    for nodos in _recorrer(d, limites, cancelacion):
+        progreso["nodos_documento"] = nodos
+        _presupuesto(nodos <= limites.unidades_documento, "json_presupuesto_documento_agotado")
+    _cancelar(cancelacion)
+    progreso["estado_json"] = EstadoJSON.COMPLETO
     return d
+
+
+_COMUNES = {"currentVersion", "maxRecordCount", "supportedQueryFormats", "capabilities", "advancedQueryCapabilities"}
+_SERVICIO = _COMUNES | {"mapName", "serviceName", "layers", "spatialReference", "fullExtent", "units"}
+_CAPA = _COMUNES | {"id", "name", "type", "geometryType", "extent", "spatialReference", "fields",
+                   "objectIdField", "objectIdFieldName"}
+
+
+def _seleccionar(d, tipo, limites, cancelacion, progreso):
+    _exigir(type(d) is dict, "json_no_es_objeto")
+    _exigir("error" not in d, "error_arcgis_en_respuesta")
+    _exigir("features" not in d and "featureSets" not in d, "respuesta_de_entidades_no_admitida")
+    claves = _SERVICIO if tipo is TipoMetadatos.SERVICIO else _CAPA
+    seleccion = {k: v for k, v in d.items() if k in claves}
+    omitidas = tuple(k for k in d if k not in claves)
+    for nodos in _recorrer(seleccion, limites, cancelacion):
+        progreso["nodos_esenciales"] = nodos
+        _presupuesto(nodos <= limites.nodos_esenciales, "json_presupuesto_esenciales_agotado")
+    return seleccion, omitidas
 
 
 def _referencia(d, objetivo):
@@ -160,7 +230,11 @@ def _esquema(d, tipo, objetivo, advertencias):
         _exigir(type(c) is dict and _texto(c.get("name")), "campo_invalido")
         _exigir(c["name"] not in nombres, "campos_duplicados")
         nombres.add(c["name"])
-        _exigir(_texto(c.get("type")) and c["type"].startswith("esriFieldType"), "tipo_de_campo_invalido")
+        _exigir(c.get("type") in ("esriFieldTypeSmallInteger", "esriFieldTypeInteger", "esriFieldTypeSingle",
+            "esriFieldTypeDouble", "esriFieldTypeString", "esriFieldTypeDate", "esriFieldTypeOID",
+            "esriFieldTypeGeometry", "esriFieldTypeBlob", "esriFieldTypeRaster", "esriFieldTypeGUID",
+            "esriFieldTypeGlobalID", "esriFieldTypeXML", "esriFieldTypeBigInteger", "esriFieldTypeDateOnly",
+            "esriFieldTypeTimeOnly", "esriFieldTypeTimestampOffset"), "tipo_de_campo_invalido")
         if c["type"] == "esriFieldTypeOID":
             oids.append(c["name"])
         if "length" in c:
@@ -177,14 +251,44 @@ def _esquema(d, tipo, objetivo, advertencias):
     return oids[0]
 
 
+def _contrastar_servicio(servicio, datos, objetivo, advertencias):
+    _exigir(type(servicio) is ValidacionMetadatos and servicio.tipo is TipoMetadatos.SERVICIO
+        and servicio.estado is EstadoMetadatos.COHERENTE and servicio.estado_json is EstadoJSON.COMPLETO
+        and servicio.alcance is AlcanceMetadatos.ESENCIALES and servicio.objetivo == objetivo,
+        "contexto_servicio_no_coherente")
+    anunciada = next(c for c in servicio.datos["layers"] if c["id"] == datos["id"])
+    _exigir(anunciada["name"] == datos["name"], "servicio_capa_nombre_contradictorio")
+    for k in ("type", "geometryType"):
+        if k in anunciada:
+            _exigir(anunciada[k] == datos[k], "servicio_capa_tipo_contradictorio")
+    # Ambos CRS se contrastaron contra el mismo par esperado. No exigir igualdad
+    # de extensiones/límites/capacidades: pueden tener ámbitos distintos.
+    if servicio.datos.get("currentVersion") != datos.get("currentVersion"):
+        advertencias.append("version_software_diferente_o_no_comparable")
+
+
 def inspeccionar_metadatos(respuesta: RespuestaHTTP, tipo: TipoMetadatos,
-                           objetivo: ObjetivoArcGIS) -> ValidacionMetadatos:
-    """El cuerpo debe proceder de un GET completado; hash sobre sus bytes exactos."""
+                           objetivo: ObjetivoArcGIS, *, limites: LimitesInspeccion | None = None,
+                           cancelacion: Event | None = None,
+                           servicio: ValidacionMetadatos | None = None) -> ValidacionMetadatos:
+    """Sintaxis completa y esquema esencial; no valida toda la semántica ArcGIS.
+
+    El cuerpo debe proceder de un GET completado; hash de esos bytes en memoria.
+    Sin contexto de servicio no se afirma coherencia entre las dos respuestas.
+    """
     if (type(respuesta) is not RespuestaHTTP or type(tipo) is not TipoMetadatos or type(objetivo) is not ObjetivoArcGIS
             or type(respuesta.contenido) is not bytes):
         raise TypeError("Respuesta, tipo y objetivo tipados requeridos")
-    diagnosticos, advertencias, datos, oid = [], [], {}, None
+    if (limites is not None and type(limites) is not LimitesInspeccion
+            or cancelacion is not None and type(cancelacion) is not Event):
+        raise TypeError("Límites y cancelación tipados requeridos")
+    limites = limites if limites is not None else LimitesInspeccion()
+    diagnosticos, advertencias, datos, oid, omitidas, coherencia = [], [], {}, None, (), None
+    alcance = AlcanceMetadatos.INCOMPLETO
+    progreso = dict(estado_json=EstadoJSON.NO_INICIADO, unidades_prelectura=0,
+                    nodos_documento=0, profundidad_maxima=0, nodos_esenciales=0)
     try:
+        _cancelar(cancelacion)
         _exigir(respuesta.codigo_http == 200, "http_no_200")
         mime = respuesta.cabeceras.get("content-type", "").split(";", 1)[0].strip().lower()
         _exigir(mime == "application/json", "tipo_mime_inesperado")
@@ -192,14 +296,41 @@ def inspeccionar_metadatos(respuesta: RespuestaHTTP, tipo: TipoMetadatos,
             clave, _, valor = parametro.partition("=")
             if clave.strip().lower() == "charset":
                 _exigir(valor.strip().strip('"').lower() in ("utf-8", "utf8"), "charset_no_admitido")
-        datos = _json_acotado(respuesta.contenido)
+        documento = _json_acotado(respuesta.contenido, limites, cancelacion, progreso)
+        datos, omitidas = _seleccionar(documento, tipo, limites, cancelacion, progreso)
+        del documento  # No congelar ni duplicar simbología u otras secciones ajenas.
         oid = _esquema(datos, tipo, objetivo, advertencias)
+        if tipo is TipoMetadatos.CAPA:
+            if servicio is None:
+                advertencias.append("coherencia_servicio_capa_no_comprobada")
+            else:
+                _contrastar_servicio(servicio, datos, objetivo, advertencias)
+                coherencia = True
+        advertencias.append("semantica_arcgis_limitada_a_propiedades_esenciales")
+        if omitidas:
+            advertencias.append("secciones_no_esenciales_no_evaluadas")
+        _cancelar(cancelacion)
+        alcance = AlcanceMetadatos.ESENCIALES
+    except _Incompleto as exc:
+        diagnosticos.append(str(exc))
     except _Invalido as exc:
         diagnosticos.append(str(exc))
+        alcance = AlcanceMetadatos.INVALIDO
+        if progreso["estado_json"] is EstadoJSON.PARCIAL:
+            progreso["estado_json"] = EstadoJSON.INVALIDO
     except (ValueError, UnicodeError, RecursionError, OverflowError):
         diagnosticos.append("json_malformado_o_no_admitido")
+        alcance = AlcanceMetadatos.INVALIDO
+        progreso["estado_json"] = EstadoJSON.INVALIDO
     if diagnosticos:
-        datos = {}  # No exponer cuerpos/error/HTML mediante un resultado público.
+        datos, oid, coherencia = {}, None, None  # Sin cuerpos/error/HTML ni evidencia contradictoria.
+    estadisticas = EstadisticasJSON(*(progreso[k] for k in (
+        "unidades_prelectura", "nodos_documento", "profundidad_maxima", "nodos_esenciales")))
+    # Una llamada directa también está acotada: no recorrer para hash un cuerpo
+    # que el transporte habría rechazado por tamaño. No inventar una huella.
+    sha256 = (hashlib.sha256(respuesta.contenido).hexdigest()
+              if len(respuesta.contenido) <= LIMITE_METADATOS else None)
     return ValidacionMetadatos(tipo, EstadoMetadatos.REVISION if diagnosticos else EstadoMetadatos.COHERENTE,
-        tuple(diagnosticos), tuple(advertencias), hashlib.sha256(respuesta.contenido).hexdigest(),
-        len(respuesta.contenido), oid, datos)
+        tuple(diagnosticos), tuple(advertencias), sha256,
+        len(respuesta.contenido), oid, datos, progreso["estado_json"], alcance, estadisticas,
+        omitidas, coherencia, objetivo)

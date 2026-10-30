@@ -173,3 +173,27 @@ Estado final: **REQUIERE CORRECCIONES/revisión antes de validar capa o consulta
 entidades**. El presupuesto de dos GET se agotó sin reintentos; no se ampliaron
 límites. Se conserva la historia anterior, sin afirmar que todo INGEMMET carece
 de capacidades ni atribuir completitud a una respuesta HTTP íntegra.
+
+## 8. Corrección offline del PASO 82-B
+
+Se conserva íntegramente la evidencia histórica E-04 de la sección 7. **No hay
+nueva evidencia remota**: cero conexiones, cero GET y capa 7 todavía **PENDIENTE**.
+Véase el [informe técnico y sus límites](validacion_metadatos_ingemmet_paso82.md#10-paso-82-b-recuperación-y-causa-comprobada).
+
+El inspector local ahora separa sintaxis JSON completa, esquema esencial y
+secciones sin evaluación semántica. Utiliza el parser estándar, presupuestos
+estructurales y esenciales independientes, salida seleccionada y cancelación.
+No duplica las secciones opcionales completas; no implementa parseo incremental.
+El presupuesto estructural se justifica y mide con fixtures inventadas; **no**
+se conoce si la respuesta institucional perdida cabe en él. El límite HTTP se
+mantiene en 1 MiB y los controles globales no cambian.
+
+El contraste servicio/capa requiere contexto validado del mismo objetivo. Las
+pruebas sintéticas no confirman los ocho campos, geometría, CRS, ObjectID ni
+paginación de INGEMMET; tampoco prueban estabilidad histórica de OID o completitud.
+No se añaden conectores, consultas GIS, activos RAW o entradas del catálogo.
+
+Una futura validación necesita revisión y autorización de **un solo GET de capa**,
+sin repetir el servicio ni usar fixtures como evidencia institucional. Si no existe
+contexto primario de servicio conservado, se dejará el contraste entre respuestas
+sin comprobar. Condiciones y preservación de evidencia: sección 15 del informe.
