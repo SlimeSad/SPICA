@@ -1,0 +1,726 @@
+{
+  "schema_version": "expediente-documental-0.1.0",
+  "estado": "PROPUESTAS_NO_EJECUTABLES",
+  "advertencia": "Fixture documental aislada. No es configuración ejecutable ni catálogo operativo. Todos los valores numéricos de parámetros siguen desconocidos.",
+  "fuentes": {
+    "senamhi_mt02": {
+      "institucion": "SENAMHI",
+      "titulo": "MT-DRD-002: control de datos automáticos en el centro de procesamiento",
+      "url": "https://www.senamhi.gob.pe/load/file/00711SENA-95.pdf",
+      "version_documento": "02",
+      "fecha_documento": "2022-12-28",
+      "tipo_fecha": "fecha visible de aprobación, no validación criptográfica",
+      "estado_documental": "VERIFICADO_PDF",
+      "vigencia_actual": "NO_VERIFICADA",
+      "sha256_referencia": "4f92172b99b351705b684f3a97c98ca16bb055174f0fe9253e9e65336a7ac9f8"
+    },
+    "diccionario_gbon": {
+      "institucion": "SENAMHI–PNDA",
+      "titulo": "DiccionarioDatos GBON/RBON conservado en el piloto",
+      "url": "urn:spica:sha256:1851039a07682a3f202314f6f8811fc616cb4ca2a486c9e737fd8cea62a4b4dd",
+      "version_documento": null,
+      "fecha_documento": null,
+      "estado_documental": "VERIFICADO_XLSX_LOCAL",
+      "sha256_referencia": "1851039a07682a3f202314f6f8811fc616cb4ca2a486c9e737fd8cea62a4b4dd"
+    },
+    "omm_indice": {
+      "institucion": "OMM",
+      "titulo": "WMO-No.8: índice público de volúmenes y capítulos",
+      "url": "https://community.wmo.int/site/knowledge-hub/programmes-and-initiatives/instruments-and-methods-of-observation-programme-imop/guide-instruments-and-methods-of-observation-wmo-no-8",
+      "version_documento": null,
+      "fecha_documento": null,
+      "estado_documental": "INDICE_VERIFICADO_CAPITULOS_NO_VERIFICADOS",
+      "edicion_declarada_en_indice": "2021/2018",
+      "ediciones_referidas_por_pagina_2026": "2024: volúmenes I/II/III; 2023: volumen V"
+    },
+    "omm_provisional": {
+      "institucion": "OMM",
+      "titulo": "WMO-No.8: presentación de edición provisional 2026",
+      "url": "https://community.wmo.int/site/knowledge-hub/programmes-and-initiatives/instruments-and-methods-of-observation-programme-imop/guide-instruments-and-methods-of-observation-wmo-no-8-0/provisional-2026-edition-of-guide-instruments-and-methods-of-observation-wmo-no8",
+      "version_documento": "2026 provisional",
+      "fecha_documento": null,
+      "fecha_actualizacion_pagina": "2026-10-02",
+      "estado_documental": "PROVISIONAL_PAGINA_VERIFICADA_CAPITULOS_NO_VERIFICADOS"
+    }
+  },
+  "diccionario": {
+    "hoja": "DiccionarioDatos",
+    "campos": {
+      "TEMP": {
+        "celda": "B12",
+        "descripcion": "Temperatura promedio horaria (unidad: °C)",
+        "unidad_literal": "°C"
+      },
+      "HR": {
+        "celda": "B13",
+        "descripcion": "Humedad relativa promedio horaria (unidad: %)",
+        "unidad_literal": "%"
+      },
+      "PP": {
+        "celda": "B14",
+        "descripcion": "Precipitación total horaria (unidad: milimetros por hora)",
+        "unidad_literal": "milimetros por hora"
+      }
+    },
+    "zona_horaria": null,
+    "codigo_estacion_estable": null,
+    "version_documental": null,
+    "continuidad_demostrada": false
+  },
+  "criterios": [
+    {
+      "id_spica": "L1-CAND-TEMP-LIM",
+      "version_propuesta": "0.1.0",
+      "nombre": "Límites institucionales de temperatura",
+      "variables": [
+        "TEMP"
+      ],
+      "tipo_prueba": "límites duros",
+      "fuentes": [
+        "senamhi_mt02",
+        "diccionario_gbon"
+      ],
+      "localizacion_verificada": "MT §6.3.1.1(a), p.11; resumen p.23",
+      "unidad_fuente": {
+        "TEMP": "°C"
+      },
+      "resolucion_temporal": "horaria",
+      "condiciones_aplicabilidad": [
+        "Equivalencia de variable y tipo de medición demostrada",
+        "Unidad original y contexto documentados",
+        "Metadatos instrumentales pertinentes revisados",
+        "Ninguna ejecución autorizada en este paso"
+      ],
+      "parametros_requeridos": [
+        {
+          "nombre": "limite_inferior",
+          "valor": null,
+          "referencia": "senamhi_mt02"
+        },
+        {
+          "nombre": "limite_superior",
+          "valor": null,
+          "referencia": "senamhi_mt02"
+        }
+      ],
+      "criterio_fuente": "Intervalo institucional fijo.",
+      "resultado_esperado": "Propuesta de comprobación/alerta futura; NO_EVALUADO mientras falten requisitos",
+      "interpretaciones_incorrectas": [
+        "Excedencia no demuestra error científico, contaminación ni falla instrumental",
+        "Banderines institucionales no son estados internos SPICA",
+        "Una fila contigua no acredita una hora consecutiva"
+      ],
+      "datos_auxiliares": [
+        "Definición de T_h frente a promedio horario",
+        "Vigencia institucional"
+      ],
+      "compatibilidad_gbon_rbon": "CONDICIONADA",
+      "incertidumbres": [
+        "No se demuestra equivalencia completa con T_h",
+        "Instrumento e incertidumbre desconocidos"
+      ],
+      "estado_verificacion": "VERIFICADO_DOCUMENTO_APLICABILIDAD_PENDIENTE",
+      "recomendacion": "CONDICIONADO",
+      "registrar_como_propuesta": true,
+      "contradicciones_documentales": []
+    },
+    {
+      "id_spica": "L1-CAND-HR-LIM",
+      "version_propuesta": "0.1.0",
+      "nombre": "Límites institucionales de humedad relativa",
+      "variables": [
+        "HR"
+      ],
+      "tipo_prueba": "límites duros",
+      "fuentes": [
+        "senamhi_mt02",
+        "diccionario_gbon"
+      ],
+      "localizacion_verificada": "MT §6.3.1.1(b), p.11; resumen p.23",
+      "unidad_fuente": {
+        "HR": "%"
+      },
+      "resolucion_temporal": "horaria",
+      "condiciones_aplicabilidad": [
+        "Equivalencia de variable y tipo de medición demostrada",
+        "Unidad original y contexto documentados",
+        "Metadatos instrumentales pertinentes revisados",
+        "Ninguna ejecución autorizada en este paso"
+      ],
+      "parametros_requeridos": [
+        {
+          "nombre": "limite_inferior",
+          "valor": null,
+          "referencia": "senamhi_mt02"
+        },
+        {
+          "nombre": "limite_superior",
+          "valor": null,
+          "referencia": "senamhi_mt02"
+        }
+      ],
+      "criterio_fuente": "Intervalo institucional fijo.",
+      "resultado_esperado": "Propuesta de comprobación/alerta futura; NO_EVALUADO mientras falten requisitos",
+      "interpretaciones_incorrectas": [
+        "Excedencia no demuestra error científico, contaminación ni falla instrumental",
+        "Banderines institucionales no son estados internos SPICA",
+        "Una fila contigua no acredita una hora consecutiva"
+      ],
+      "datos_auxiliares": [
+        "Definición de HR_h",
+        "Base de medición, sensor y tolerancia"
+      ],
+      "compatibilidad_gbon_rbon": "CONDICIONADA",
+      "incertidumbres": [
+        "No se convierte este intervalo en ley universal de exclusión",
+        "Promedio e incertidumbre requieren revisión"
+      ],
+      "estado_verificacion": "VERIFICADO_DOCUMENTO_APLICABILIDAD_PENDIENTE",
+      "recomendacion": "CONDICIONADO",
+      "registrar_como_propuesta": true,
+      "contradicciones_documentales": []
+    },
+    {
+      "id_spica": "L1-CAND-PP-LIM",
+      "version_propuesta": "0.1.0",
+      "nombre": "Límites de precipitación horaria",
+      "variables": [
+        "PP"
+      ],
+      "tipo_prueba": "límites duros",
+      "fuentes": [
+        "senamhi_mt02",
+        "diccionario_gbon"
+      ],
+      "localizacion_verificada": "MT §6.3.1.1(c), p.11; resumen p.23",
+      "unidad_fuente": {
+        "PP": "mm/h"
+      },
+      "resolucion_temporal": "horaria",
+      "condiciones_aplicabilidad": [
+        "Equivalencia de variable y tipo de medición demostrada",
+        "Unidad original y contexto documentados",
+        "Metadatos instrumentales pertinentes revisados",
+        "Ninguna ejecución autorizada en este paso"
+      ],
+      "parametros_requeridos": [
+        {
+          "nombre": "limite_inferior",
+          "valor": null,
+          "referencia": "senamhi_mt02"
+        },
+        {
+          "nombre": "limite_superior",
+          "valor": null,
+          "referencia": "senamhi_mt02"
+        }
+      ],
+      "criterio_fuente": "Comprobación institucional del acumulado horario.",
+      "resultado_esperado": "Propuesta de comprobación/alerta futura; NO_EVALUADO mientras falten requisitos",
+      "interpretaciones_incorrectas": [
+        "Excedencia no demuestra error científico, contaminación ni falla instrumental",
+        "Banderines institucionales no son estados internos SPICA",
+        "Una fila contigua no acredita una hora consecutiva"
+      ],
+      "datos_auxiliares": [
+        "Significado de acumulación e intervalo",
+        "Tipo y resolución del pluviómetro"
+      ],
+      "compatibilidad_gbon_rbon": "CONDICIONADA",
+      "incertidumbres": [
+        "El diccionario dice total horario y unidad literal milimetros por hora",
+        "No se presume equivalencia entre acumulado e intensidad"
+      ],
+      "estado_verificacion": "VERIFICADO_DOCUMENTO_APLICABILIDAD_PENDIENTE",
+      "recomendacion": "CONDICIONADO",
+      "registrar_como_propuesta": true,
+      "contradicciones_documentales": []
+    },
+    {
+      "id_spica": "L1-CAND-PP-24H",
+      "version_propuesta": "0.1.0",
+      "nombre": "Límites de precipitación de un período de 24 horas",
+      "variables": [
+        "PP"
+      ],
+      "tipo_prueba": "acumulación temporal",
+      "fuentes": [
+        "senamhi_mt02",
+        "diccionario_gbon"
+      ],
+      "localizacion_verificada": "MT §6.3.1.1(c), p.11; resumen p.23",
+      "unidad_fuente": {
+        "PP": "mm/24h"
+      },
+      "resolucion_temporal": "24 horas precedentes",
+      "condiciones_aplicabilidad": [
+        "Equivalencia de variable y tipo de medición demostrada",
+        "Unidad original y contexto documentados",
+        "Metadatos instrumentales pertinentes revisados",
+        "Ninguna ejecución autorizada en este paso"
+      ],
+      "parametros_requeridos": [
+        {
+          "nombre": "limite_acumulacion",
+          "valor": null,
+          "referencia": "senamhi_mt02"
+        },
+        {
+          "nombre": "ventana_documentada",
+          "valor": null,
+          "referencia": "senamhi_mt02"
+        }
+      ],
+      "criterio_fuente": "Límite institucional de acumulación.",
+      "resultado_esperado": "Propuesta de comprobación/alerta futura; NO_EVALUADO mientras falten requisitos",
+      "interpretaciones_incorrectas": [
+        "Excedencia no demuestra error científico, contaminación ni falla instrumental",
+        "Banderines institucionales no son estados internos SPICA",
+        "Una fila contigua no acredita una hora consecutiva"
+      ],
+      "datos_auxiliares": [
+        "Ventana completa y sin duplicados",
+        "Hora, zona y extremos del intervalo",
+        "Definición de P_h/PT_h"
+      ],
+      "compatibilidad_gbon_rbon": "CONDICIONADA",
+      "incertidumbres": [
+        "Hay ambigüedad de notación entre términos horarios y acumulado de 24h",
+        "No se construye la ventana ni se suman observaciones"
+      ],
+      "estado_verificacion": "VERIFICADO_DOCUMENTO_APLICABILIDAD_PENDIENTE",
+      "recomendacion": "CONDICIONADO",
+      "registrar_como_propuesta": true,
+      "contradicciones_documentales": [
+        "La notación de acumulación P_h/PT_h debe aclararse institucionalmente antes de traducir la fórmula"
+      ]
+    },
+    {
+      "id_spica": "L1-CAND-BLANDOS",
+      "version_propuesta": "0.1.0",
+      "nombre": "Límites específicos por estación o sector",
+      "variables": [
+        "TEMP",
+        "HR",
+        "PP"
+      ],
+      "tipo_prueba": "límites blandos",
+      "fuentes": [
+        "senamhi_mt02",
+        "diccionario_gbon"
+      ],
+      "localizacion_verificada": "MT §6.3.1.2(a–c), pp.12–14",
+      "unidad_fuente": {
+        "TEMP": "°C",
+        "HR": "%",
+        "PP": "mm/h"
+      },
+      "resolucion_temporal": "hora del día / mes según escala",
+      "condiciones_aplicabilidad": [
+        "Equivalencia de variable y tipo de medición demostrada",
+        "Unidad original y contexto documentados",
+        "Metadatos instrumentales pertinentes revisados",
+        "Ninguna ejecución autorizada en este paso"
+      ],
+      "parametros_requeridos": [
+        {
+          "nombre": "limite_contextual_inferior",
+          "valor": null,
+          "referencia": "senamhi_mt02"
+        },
+        {
+          "nombre": "limite_contextual_superior",
+          "valor": null,
+          "referencia": "senamhi_mt02"
+        }
+      ],
+      "criterio_fuente": "Comparación con límites de contexto.",
+      "resultado_esperado": "Propuesta de comprobación/alerta futura; NO_EVALUADO mientras falten requisitos",
+      "interpretaciones_incorrectas": [
+        "Excedencia no demuestra error científico, contaminación ni falla instrumental",
+        "Banderines institucionales no son estados internos SPICA",
+        "Una fila contigua no acredita una hora consecutiva"
+      ],
+      "datos_auxiliares": [
+        "Identidad estable",
+        "Tablas oficiales de umbrales y período de referencia",
+        "Sector climático y hora pertinentes"
+      ],
+      "compatibilidad_gbon_rbon": "CONDICIONADA",
+      "incertidumbres": [
+        "No se dispone de tablas y correspondencias aprobadas para el producto",
+        "No se estiman umbrales con el CSV"
+      ],
+      "estado_verificacion": "VERIFICADO_DOCUMENTO_APLICABILIDAD_PENDIENTE",
+      "recomendacion": "CONDICIONADO",
+      "registrar_como_propuesta": true,
+      "contradicciones_documentales": []
+    },
+    {
+      "id_spica": "L1-CAND-TEMP-PASO",
+      "version_propuesta": "0.1.0",
+      "nombre": "Variación temporal de temperatura",
+      "variables": [
+        "TEMP"
+      ],
+      "tipo_prueba": "paso",
+      "fuentes": [
+        "senamhi_mt02",
+        "diccionario_gbon"
+      ],
+      "localizacion_verificada": "MT §6.3.2.1(a), pp.14–15; subreglas 31a–e",
+      "unidad_fuente": {
+        "TEMP": "°C"
+      },
+      "resolucion_temporal": "retardos horarios definidos por fuente",
+      "condiciones_aplicabilidad": [
+        "Equivalencia de variable y tipo de medición demostrada",
+        "Unidad original y contexto documentados",
+        "Metadatos instrumentales pertinentes revisados",
+        "Ninguna ejecución autorizada en este paso"
+      ],
+      "parametros_requeridos": [
+        {
+          "nombre": "retardos",
+          "valor": null,
+          "referencia": "senamhi_mt02"
+        },
+        {
+          "nombre": "limites_por_retardo",
+          "valor": null,
+          "referencia": "senamhi_mt02"
+        }
+      ],
+      "criterio_fuente": "Cambios entre observaciones temporalmente relacionadas.",
+      "resultado_esperado": "Propuesta de comprobación/alerta futura; NO_EVALUADO mientras falten requisitos",
+      "interpretaciones_incorrectas": [
+        "Excedencia no demuestra error científico, contaminación ni falla instrumental",
+        "Banderines institucionales no son estados internos SPICA",
+        "Una fila contigua no acredita una hora consecutiva"
+      ],
+      "datos_auxiliares": [
+        "Intervalos consecutivos demostrados",
+        "Identidad de estación e instrumento",
+        "Promedio frente a valor instantáneo"
+      ],
+      "compatibilidad_gbon_rbon": "CONDICIONADA",
+      "incertidumbres": [
+        "HORA y zona siguen sin resolver",
+        "El texto general menciona valor instantáneo; el producto declara promedio"
+      ],
+      "estado_verificacion": "VERIFICADO_DOCUMENTO_APLICABILIDAD_PENDIENTE",
+      "recomendacion": "CONDICIONADO",
+      "registrar_como_propuesta": true,
+      "contradicciones_documentales": []
+    },
+    {
+      "id_spica": "L1-CAND-HR-PASO",
+      "version_propuesta": "0.1.0",
+      "nombre": "Variación temporal de humedad relativa",
+      "variables": [
+        "HR"
+      ],
+      "tipo_prueba": "paso",
+      "fuentes": [
+        "senamhi_mt02",
+        "diccionario_gbon"
+      ],
+      "localizacion_verificada": "MT §6.3.2.1(c), p.15; subregla 33",
+      "unidad_fuente": {
+        "HR": "%"
+      },
+      "resolucion_temporal": "horaria",
+      "condiciones_aplicabilidad": [
+        "Equivalencia de variable y tipo de medición demostrada",
+        "Unidad original y contexto documentados",
+        "Metadatos instrumentales pertinentes revisados",
+        "Ninguna ejecución autorizada en este paso"
+      ],
+      "parametros_requeridos": [
+        {
+          "nombre": "limite_de_cambio",
+          "valor": null,
+          "referencia": "senamhi_mt02"
+        },
+        {
+          "nombre": "retardo",
+          "valor": null,
+          "referencia": "senamhi_mt02"
+        }
+      ],
+      "criterio_fuente": "Cambio temporal con límite institucional.",
+      "resultado_esperado": "Propuesta de comprobación/alerta futura; NO_EVALUADO mientras falten requisitos",
+      "interpretaciones_incorrectas": [
+        "Excedencia no demuestra error científico, contaminación ni falla instrumental",
+        "Banderines institucionales no son estados internos SPICA",
+        "Una fila contigua no acredita una hora consecutiva"
+      ],
+      "datos_auxiliares": [
+        "Cadencia real",
+        "Base de comparación y tratamiento de faltantes"
+      ],
+      "compatibilidad_gbon_rbon": "CONDICIONADA",
+      "incertidumbres": [
+        "La fuente declara una extrapolación desde períodos semihorarios",
+        "No se equipara proximidad de filas con proximidad temporal"
+      ],
+      "estado_verificacion": "VERIFICADO_DOCUMENTO_APLICABILIDAD_PENDIENTE",
+      "recomendacion": "CONDICIONADO",
+      "registrar_como_propuesta": true,
+      "contradicciones_documentales": []
+    },
+    {
+      "id_spica": "L1-CAND-PERSISTENCIA",
+      "version_propuesta": "0.1.0",
+      "nombre": "Persistencia de temperatura y humedad",
+      "variables": [
+        "TEMP",
+        "HR"
+      ],
+      "tipo_prueba": "persistencia",
+      "fuentes": [
+        "senamhi_mt02",
+        "diccionario_gbon"
+      ],
+      "localizacion_verificada": "MT §6.3.2.2(a), pp.17–18; subreglas 41–42",
+      "unidad_fuente": {
+        "TEMP": "°C",
+        "HR": "%"
+      },
+      "resolucion_temporal": "horas consecutivas",
+      "condiciones_aplicabilidad": [
+        "Equivalencia de variable y tipo de medición demostrada",
+        "Unidad original y contexto documentados",
+        "Metadatos instrumentales pertinentes revisados",
+        "Ninguna ejecución autorizada en este paso"
+      ],
+      "parametros_requeridos": [
+        {
+          "nombre": "ventana",
+          "valor": null,
+          "referencia": "senamhi_mt02"
+        },
+        {
+          "nombre": "criterio_de_igualdad",
+          "valor": null,
+          "referencia": "senamhi_mt02"
+        }
+      ],
+      "criterio_fuente": "Repeticiones sometidas a revisión.",
+      "resultado_esperado": "Propuesta de comprobación/alerta futura; NO_EVALUADO mientras falten requisitos",
+      "interpretaciones_incorrectas": [
+        "Excedencia no demuestra error científico, contaminación ni falla instrumental",
+        "Banderines institucionales no son estados internos SPICA",
+        "Una fila contigua no acredita una hora consecutiva"
+      ],
+      "datos_auxiliares": [
+        "Ventana y horas reales",
+        "Resolución y redondeo del sensor",
+        "Política de igualdad y caso de saturación"
+      ],
+      "compatibilidad_gbon_rbon": "CONDICIONADA",
+      "incertidumbres": [
+        "Una repetición puede ser legítima",
+        "Texto y condiciones tabuladas necesitan conciliación"
+      ],
+      "estado_verificacion": "VERIFICADO_DOCUMENTO_APLICABILIDAD_PENDIENTE",
+      "recomendacion": "CONDICIONADO",
+      "registrar_como_propuesta": true,
+      "contradicciones_documentales": [
+        "El texto p.17 describe igualdad completa; p.18 usa una cadena de desigualdades y un de lo contrario que no define todos los casos",
+        "La condición adicional de HR en p.18 requiere aclarar tratamiento de saturación"
+      ]
+    },
+    {
+      "id_spica": "L1-CAND-EXTREMOS-INTERNOS",
+      "version_propuesta": "0.1.0",
+      "nombre": "Coherencia con extremos horarios",
+      "variables": [
+        "TEMP",
+        "HR"
+      ],
+      "tipo_prueba": "consistencia interna",
+      "fuentes": [
+        "senamhi_mt02",
+        "diccionario_gbon"
+      ],
+      "localizacion_verificada": "MT §6.3.2.1(b,d), p.15; subreglas 32 y 34",
+      "unidad_fuente": {
+        "TEMP": "°C",
+        "HR": "%"
+      },
+      "resolucion_temporal": "misma hora",
+      "condiciones_aplicabilidad": [
+        "Equivalencia de variable y tipo de medición demostrada",
+        "Unidad original y contexto documentados",
+        "Metadatos instrumentales pertinentes revisados",
+        "Ninguna ejecución autorizada en este paso"
+      ],
+      "parametros_requeridos": [],
+      "criterio_fuente": "Contraste con extremos auxiliares.",
+      "resultado_esperado": "Propuesta de comprobación/alerta futura; NO_EVALUADO mientras falten requisitos",
+      "interpretaciones_incorrectas": [
+        "Excedencia no demuestra error científico, contaminación ni falla instrumental",
+        "Banderines institucionales no son estados internos SPICA",
+        "Una fila contigua no acredita una hora consecutiva"
+      ],
+      "datos_auxiliares": [
+        "Mínimo y máximo de la misma hora y variable"
+      ],
+      "compatibilidad_gbon_rbon": "NO_APLICABLE_ACTUAL",
+      "incertidumbres": [
+        "El CSV no aporta esos campos",
+        "No se calculan sustitutos ni se inventan máximos/mínimos"
+      ],
+      "estado_verificacion": "VERIFICADO_DOCUMENTO_APLICABILIDAD_PENDIENTE",
+      "recomendacion": "NO_APLICABLE",
+      "registrar_como_propuesta": false,
+      "contradicciones_documentales": []
+    },
+    {
+      "id_spica": "L1-CAND-PP-TEMPORAL",
+      "version_propuesta": "0.1.0",
+      "nombre": "No trasladar paso o persistencia a PP",
+      "variables": [
+        "PP"
+      ],
+      "tipo_prueba": "exclusión de aplicabilidad documental",
+      "fuentes": [
+        "senamhi_mt02",
+        "diccionario_gbon"
+      ],
+      "localizacion_verificada": "MT §6.3.2.1(e), p.16 y §6.3.2.2(e), p.19",
+      "unidad_fuente": {
+        "PP": "mm/h"
+      },
+      "resolucion_temporal": "no definida como prueba temporal de PP",
+      "condiciones_aplicabilidad": [
+        "Equivalencia de variable y tipo de medición demostrada",
+        "Unidad original y contexto documentados",
+        "Metadatos instrumentales pertinentes revisados",
+        "Ninguna ejecución autorizada en este paso"
+      ],
+      "parametros_requeridos": [],
+      "criterio_fuente": "La fuente excluye esas pruebas para PP.",
+      "resultado_esperado": "Propuesta de comprobación/alerta futura; NO_EVALUADO mientras falten requisitos",
+      "interpretaciones_incorrectas": [
+        "Excedencia no demuestra error científico, contaminación ni falla instrumental",
+        "Banderines institucionales no son estados internos SPICA",
+        "Una fila contigua no acredita una hora consecutiva"
+      ],
+      "datos_auxiliares": [
+        "Otra fuente específica si se propone un control diferente"
+      ],
+      "compatibilidad_gbon_rbon": "NO_APLICABLE_ACTUAL",
+      "incertidumbres": [
+        "No extender reglas de TEMP/HR por analogía"
+      ],
+      "estado_verificacion": "VERIFICADO_DOCUMENTO_APLICABILIDAD_PENDIENTE",
+      "recomendacion": "NO_APLICABLE",
+      "registrar_como_propuesta": false,
+      "contradicciones_documentales": []
+    },
+    {
+      "id_spica": "L1-CAND-REVISION-HUMANA",
+      "version_propuesta": "0.1.0",
+      "nombre": "Revisión interna, espacial y satelital",
+      "variables": [
+        "TEMP",
+        "HR",
+        "PP"
+      ],
+      "tipo_prueba": "revisión manual",
+      "fuentes": [
+        "senamhi_mt02",
+        "diccionario_gbon"
+      ],
+      "localizacion_verificada": "MT §6.2.5, p.10 y §6.3.2.3–5, pp.20–22",
+      "unidad_fuente": {
+        "TEMP": "°C",
+        "HR": "%",
+        "PP": "mm/h"
+      },
+      "resolucion_temporal": "dependiente del caso",
+      "condiciones_aplicabilidad": [
+        "Equivalencia de variable y tipo de medición demostrada",
+        "Unidad original y contexto documentados",
+        "Metadatos instrumentales pertinentes revisados",
+        "Ninguna ejecución autorizada en este paso"
+      ],
+      "parametros_requeridos": [],
+      "criterio_fuente": "Intervención especializada.",
+      "resultado_esperado": "Derivación a revisión humana; NO_EVALUADO automático",
+      "interpretaciones_incorrectas": [
+        "Excedencia no demuestra error científico, contaminación ni falla instrumental",
+        "Banderines institucionales no son estados internos SPICA",
+        "Una fila contigua no acredita una hora consecutiva"
+      ],
+      "datos_auxiliares": [
+        "Estaciones físicamente acreditadas y semejantes",
+        "Geografía, imágenes y tiempos compatibles",
+        "Especialista responsable"
+      ],
+      "compatibilidad_gbon_rbon": "NO_APLICABLE_ACTUAL",
+      "incertidumbres": [
+        "No es una regla automática de una sola observación",
+        "No se presume que GBON/RBON haya pasado estos controles"
+      ],
+      "estado_verificacion": "VERIFICADO_DOCUMENTO_APLICABILIDAD_PENDIENTE",
+      "recomendacion": "NO_APLICABLE",
+      "registrar_como_propuesta": false,
+      "contradicciones_documentales": []
+    },
+    {
+      "id_spica": "L1-CAND-OMM-METROLOGIA",
+      "version_propuesta": "0.1.0",
+      "nombre": "Pendiente OMM: instrumento, muestreo e incertidumbre",
+      "variables": [
+        "TEMP",
+        "HR",
+        "PP"
+      ],
+      "tipo_prueba": "fundamentación metrológica pendiente",
+      "fuentes": [
+        "omm_indice",
+        "omm_provisional",
+        "diccionario_gbon"
+      ],
+      "localizacion_verificada": "Índice oficial: vol.I caps.1/2/4/6, vol.III cap.1, vol.V caps.1–4; texto científico NO VERIFICADO",
+      "unidad_fuente": {
+        "TEMP": "°C",
+        "HR": "%",
+        "PP": "milimetros por hora"
+      },
+      "resolucion_temporal": null,
+      "condiciones_aplicabilidad": [
+        "Equivalencia de variable y tipo de medición demostrada",
+        "Unidad original y contexto documentados",
+        "Metadatos instrumentales pertinentes revisados",
+        "Ninguna ejecución autorizada en este paso"
+      ],
+      "parametros_requeridos": [],
+      "criterio_fuente": "Contenido científico no verificado; no se atribuye criterio operativo a OMM.",
+      "resultado_esperado": "Propuesta de comprobación/alerta futura; NO_EVALUADO mientras falten requisitos",
+      "interpretaciones_incorrectas": [
+        "Excedencia no demuestra error científico, contaminación ni falla instrumental",
+        "Banderines institucionales no son estados internos SPICA",
+        "Una fila contigua no acredita una hora consecutiva"
+      ],
+      "datos_auxiliares": [
+        "Edición publicada y capítulos accesibles",
+        "Sensor, calibración, muestreo, agregación e incertidumbre"
+      ],
+      "compatibilidad_gbon_rbon": "CONDICIONADA",
+      "incertidumbres": [
+        "No se transforma una recomendación instrumental en límite de exclusión",
+        "La edición provisional 2026 no acredita aprobación ni reemplazo de ediciones publicadas"
+      ],
+      "estado_verificacion": "NO_VERIFICADO_CONTENIDO_OMM",
+      "recomendacion": "CONDICIONADO",
+      "registrar_como_propuesta": true,
+      "contradicciones_documentales": [
+        "El índice general anuncia 2021/2018; la página provisional remite a ediciones publicadas posteriores: no se mezclan textos ni versiones"
+      ]
+    }
+  ]
+}
