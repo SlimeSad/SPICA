@@ -169,3 +169,21 @@ autoridad y vinculación con `SERV_GEOLOGIA_50K_INTEGRADA`/capa 7 permanecen pen
 No se cita un texto que no se leyó, no se afirma licencia abierta y tampoco se
 deduce prohibición. El permiso del usuario para una operación y los derechos
 institucionales de reutilización son evidencias diferentes.
+
+## 9. Continuidad del PASO 83-C: simulación sin autorización
+
+El [informe del PASO 83-C](simulacion_piloto_arcgis_paso83c.md) añade contratos y
+un ejecutor exclusivamente sintético. Resuelve offline la preparación del sobre
+mínimo de atributos señalada en la sección 5, sin modificar el validador estable
+ni habilitar `ClienteHTTP`. No demuestra capacidades institucionales ni permisos.
+
+Se mantiene la lista candidata de siete parámetros. **Pedir una fila y rechazar
+localmente más de una no garantiza haber recibido como máximo una entidad.** Sin
+ObjectID previamente acreditado ni evidencia aplicable de que el servicio respete
+el límite propuesto, el piloto real permanece bloqueado. No se hace un GET previo
+para averiguarlo, no se inventa un ObjectID y no se amplía el alcance.
+
+El control de 64 KiB limita el cuerpo, no el número de entidades transferidas.
+La sección 3 continúa siendo una propuesta no verificada funcionalmente. Los
+permisos, retención de evidencia institucional y autorización de ejecución siguen
+pendientes. No hay consultas reales a `/query` en el PASO 83-C.
