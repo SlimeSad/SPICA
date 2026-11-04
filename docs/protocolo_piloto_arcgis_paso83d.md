@@ -149,3 +149,16 @@ RAW operativo, adquisición GIS, geometrías, procesamiento científico o QA/QC.
 Los permisos y aclaraciones están en la [auditoría documental](derechos_uso_ingemmet_paso83d.md).
 El dictamen del PASO 83-D es **APTO CON RESTRICCIONES para revisión documental**,
 no autorización del GET ni selección de una vía operativa.
+
+## 7. Continuidad documental del PASO 83-E
+
+La [consolidación por servidor](fuentes_oficiales_ingemmet_paso83e.md) mantiene
+separados geocatmin y geocatminnube. La URL candidata de la sección 3 y los siete
+parámetros siguen siendo exclusivamente la propuesta para geocatminnube: no se
+sustituye el host, no se presume capa 7 en el otro servidor y no se trasladan
+fecha/edición, capacidades o autorizaciones entre ellos.
+
+El [borrador de consulta institucional](consulta_institucional_ingemmet_paso83e.md)
+solicita aclaraciones sin ejecutarlas ni enviarlas. **Estado: `/query` NO AUTORIZADO
+en ambos servidores**, pendiente de evidencia y revisión del usuario. Una respuesta
+futura tampoco activará automáticamente el simulador o el transporte HTTP.

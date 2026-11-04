@@ -103,3 +103,16 @@ sobre uso/derivados y reconocimiento, pero su aplicación a la capa y a cada
 operación no está demostrada. No se aprueba adquisición ni reutilización.
 El [protocolo del piloto](protocolo_piloto_arcgis_paso83d.md) conserva la autorización
 pendiente y las barreras del PASO 83-C; este documento no las sustituye.
+
+## 6. Continuidad documental del PASO 83-E
+
+El [expediente de consulta y seguimiento](consulta_institucional_ingemmet_paso83e.md)
+conserva Q-01 a Q-12 agrupadas en seis consultas y añade el destinatario propuesto
+aportado por el usuario, Dirección de Geología Regional. Es borrador no enviado;
+el contacto no ha sido validado independientemente y no hay respuestas registradas.
+
+La [matriz de fuentes por servidor](fuentes_oficiales_ingemmet_paso83e.md)
+no altera la evaluación de permisos: la vigencia y aplicación de la licencia a
+cada host, producto, capa y distribución siguen pendientes, incluida redistribución
+y atribución. No se extiende un permiso por compartir servicio o publicador.
+La preparación de la consulta no autoriza envío ni adquisición.

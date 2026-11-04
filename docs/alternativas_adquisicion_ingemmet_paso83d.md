@@ -195,3 +195,17 @@ apertura de evidencia institucional, acceso a RAW/staging/SQLite operativos,
 instalaciones, migraciones, activación QA/QC, commits o push. No se comparan hashes
 operativos: eso requeriría abrir datos excluidos. Esta afirmación describe las
 acciones de la auditoría, no certifica actividad de otros procesos.
+
+## 8. Continuidad documental del PASO 83-E
+
+La [consolidación de fuentes del 83-E](fuentes_oficiales_ingemmet_paso83e.md)
+incorpora referencias aportadas de `geocatmin.ingemmet.gob.pe` y
+`SERV_MAPAS_GEOLOGICOS`, sin confundirlas con la evidencia histórica de capa 7 en
+`geocatminnube.ingemmet.gob.pe`. Agosto de 2025 y 1057 mapas son declaraciones
+referidas al primer servidor, no comprobaciones nuevas ni edición heredable al
+segundo. Los mapas individuales no acreditan un paquete completo de la integración.
+
+Se mantienen la comparación y los pendientes de este informe en su alcance
+histórico. La [consulta institucional preparada](consulta_institucional_ingemmet_paso83e.md)
+agrupa las 12 aclaraciones sin enviarlas. `/query` permanece **NO AUTORIZADO**;
+no se selecciona otra vía ni se habilita un servidor por compartir nombre.
