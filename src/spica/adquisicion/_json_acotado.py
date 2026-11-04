@@ -2,6 +2,7 @@
 
 import json
 import math
+from decimal import Decimal
 
 
 class _Invalido(Exception):
@@ -50,7 +51,8 @@ def _recorrer(d, limites, cancelacion):
         yield nodos
 
 
-def leer_json(cuerpo, limites, cancelacion, progreso, *, max_bytes, estados, codigo_bytes):
+def leer_json(cuerpo, limites, cancelacion, progreso, *, max_bytes, estados, codigo_bytes,
+              decimales_exactos=False, compatibilidad_binaria=False):
     _presupuesto(len(cuerpo) <= max_bytes, codigo_bytes)
     _cancelar(cancelacion)
     progreso["estado_json"] = estados.PARCIAL
@@ -113,6 +115,22 @@ def leer_json(cuerpo, limites, cancelacion, progreso, *, max_bytes, estados, cod
         _exigir(len(s) <= 32, "json_entero_excesivo")
         return int(s)
     def decimal(s):
+        if decimales_exactos:
+            # Solo la inspección vectorial opta por este camino. El constructor
+            # Decimal(texto) es exacto e independiente de getcontext().prec.
+            _presupuesto(len(s) <= limites.caracteres_numero, "json_numero_excesivo")
+            exponente = s.lower().partition("e")[2]
+            _presupuesto(not exponente or abs(int(exponente)) <= limites.exponente_decimal,
+                         "json_exponente_excesivo")
+            valor = Decimal(s)
+            _exigir(valor.is_finite(), "json_numero_no_finito")
+            _presupuesto(abs(valor.as_tuple().exponent) <= limites.exponente_decimal,
+                         "json_exponente_excesivo")
+            if compatibilidad_binaria:
+                convertido = float(valor)
+                _exigir(math.isfinite(convertido), "json_numero_no_finito")
+                _exigir(convertido != 0 or valor.is_zero(), "json_subdesbordamiento_binario")
+            return valor
         valor = float(s)
         _exigir(math.isfinite(valor), "json_numero_no_finito")
         return valor

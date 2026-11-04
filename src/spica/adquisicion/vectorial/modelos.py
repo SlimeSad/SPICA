@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, field, fields
 from datetime import datetime
+from decimal import Decimal
 from enum import Enum
 import hashlib
 import json
@@ -50,7 +51,7 @@ def _parametros(v):
     return MappingProxyType(d)
 
 
-def _congelar(v, _cuenta=None, _nivel=0):
+def _congelar(v, _cuenta=None, _nivel=0, *, binaria=False):
     """Snapshot JSON profundo; también acota constructores invocados directamente."""
     cuenta = [0] if _cuenta is None else _cuenta
     cuenta[0] += 1
@@ -62,13 +63,21 @@ def _congelar(v, _cuenta=None, _nivel=0):
         cuenta[0] += len(v)  # Las claves son nodos, como en el lector compartido.
         if cuenta[0] > 500_000:
             raise _LimiteSnapshot("Snapshot JSON excesivo")
-        return MappingProxyType({k: _congelar(x, cuenta, _nivel + 1) for k, x in v.items()})
+        return MappingProxyType({k: _congelar(x, cuenta, _nivel + 1, binaria=binaria) for k, x in v.items()})
     if type(v) in (list, tuple):
-        return tuple(_congelar(x, cuenta, _nivel + 1) for x in v)
-    if (type(v) not in (str, int, float, bool, type(None))
-            or type(v) is float and not math.isfinite(v)):
+        return tuple(_congelar(x, cuenta, _nivel + 1, binaria=binaria) for x in v)
+    if (type(v) not in (str, int, float, Decimal, bool, type(None))
+            or type(v) is float and not math.isfinite(v)
+            or type(v) is Decimal and not v.is_finite()):
         raise ValueError("Valor JSON no admitido")
+    if binaria and type(v) is Decimal:
+        return float(v)  # El lector ya descartó overflow y subdesbordamiento.
     return v
+
+
+class PrecisionNumerica(Enum):
+    BINARIA_COMPATIBLE = "binaria_compatible"
+    DECIMAL_EXACTA = "decimal_exacta"
 
 
 class EstadoCompletitud(Enum):
@@ -132,12 +141,16 @@ class LimitesVector:
     entidades_total: int = 20_000
     bytes_total: int = 64 * 1024 * 1024
     bytes_auxiliares: int = 8 * 1024 * 1024
+    caracteres_numero: int = 256
+    exponente_decimal: int = 4096
 
     def __post_init__(self):
         for f in fields(self):
             _entero(getattr(self, f.name), 1, 512 * 1024 * 1024)
         if self.profundidad > 64:
             raise ValueError("Profundidad vectorial excesiva")
+        if self.caracteres_numero > 256 or self.exponente_decimal > 4096:
+            raise ValueError("Presupuesto numérico vectorial excesivo")
 
 
 @dataclass(frozen=True)
@@ -334,7 +347,7 @@ class EntidadVector:
         # Las salidas del validador ya son snapshots inmutables; impedir que un
         # constructor público retenga mapas/listas mutables suministrados fuera.
         if type(self.atributos) is not MappingProxyType or any(
-                type(v) not in (str, int, float, bool, type(None)) for v in self.atributos.values()):
+                type(v) not in (str, int, float, Decimal, bool, type(None)) for v in self.atributos.values()):
             raise ValueError("Atributos escalares inmutables requeridos")
         object.__setattr__(self, "atributos", _congelar(self.atributos))
         if type(self.estado_geometria) is not EstadoGeometria:
@@ -360,9 +373,11 @@ class PaginaValidada:
     bytes_recibidos: int = 0
     coordenadas: int = 0
     diagnosticos: tuple[str, ...] = ()
+    precision: PrecisionNumerica = PrecisionNumerica.BINARIA_COMPATIBLE
 
     def __post_init__(self):
         if (type(self.respuesta) is not RespuestaSintetica or type(self.estado) is not EstadoPagina
+                or type(self.precision) is not PrecisionNumerica
                 or type(self.entidades) is not tuple or any(type(e) is not EntidadVector for e in self.entidades)
                 or type(self.diagnosticos) is not tuple or any(type(d) is not str for d in self.diagnosticos)):
             raise TypeError("Salida de página tipada e inmutable requerida")
@@ -403,9 +418,11 @@ class ResultadoVector:
     diagnosticos: tuple[str, ...]
     limitaciones: tuple[str, ...]
     limites: LimitesVector
+    precision: PrecisionNumerica = PrecisionNumerica.BINARIA_COMPATIBLE
 
     def __post_init__(self):
         if (type(self.consulta) is not ConsultaVector or type(self.estrategia) is not EstrategiaPaginacion
+                or type(self.precision) is not PrecisionNumerica
                 or type(self.completitud) is not EstadoCompletitud or type(self.limites) is not LimitesVector
                 or self.evidencia is not None and type(self.evidencia) is not EvidenciaConjunto
                 or type(self.recibos) is not tuple or any(type(r) is not ReciboPagina for r in self.recibos)):

@@ -4,7 +4,7 @@ from .modelos import (
     CampoVector, ConsultaVector, ContratoFeatureSet, EntidadVector, EstadoCompletitud,
     EstadoGeometria, EstadoPagina, EstrategiaPaginacion, EvidenciaConjunto,
     LimitesVector, PaginaValidada, RecursoVector, ReferenciaEspacial,
-    RespuestaSintetica, ResultadoVector, SolicitudPagina, TipoCampo,
+    RespuestaSintetica, ResultadoVector, SolicitudPagina, TipoCampo, PrecisionNumerica,
 )
 from .validador import validar_featureset
 from .coordinador import coordinar
@@ -15,5 +15,5 @@ __all__ = [
     "EstadoCompletitud", "EstadoGeometria", "EstadoPagina", "EstrategiaPaginacion",
     "EvidenciaConjunto", "LimitesVector", "PaginaValidada", "RecursoVector",
     "ReferenciaEspacial", "RespuestaSintetica", "ResultadoVector", "SolicitudPagina",
-    "TipoCampo", "TransporteSintetico", "validar_featureset", "coordinar",
+    "TipoCampo", "PrecisionNumerica", "TransporteSintetico", "validar_featureset", "coordinar",
 ]

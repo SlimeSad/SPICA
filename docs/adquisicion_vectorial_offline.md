@@ -87,7 +87,8 @@ Ninguna identidad se genera para datos institucionales reales.
 El lector comprueba bytes, UTF-8 estricto (BOM admitido), profundidad, cardinalidad
 y nodos antes de materializar con `json.loads`. Este parser comprueba la gramática
 completa, incluidos finales y sufijos. Rechaza claves duplicadas en cualquier nivel,
-también escapadas, NaN, Infinity, desbordes y enteros de más de 32 caracteres.
+también escapadas, NaN, Infinity y enteros de más de 32 caracteres. El modo binario
+también rechaza desbordes y, desde el PASO 83-B, subdesbordamiento a cero.
 Después recorre el árbol completo para comprobar el presupuesto y las cadenas.
 La frontera de recorrido usa iteradores O(profundidad).
 
@@ -109,11 +110,25 @@ solo reciben comprobación textual: no se acredita su unicidad institucional.
 Blob, Raster, XML y tipos temporales adicionales quedan fuera del prototipo.
 Aliases, dominios y semántica temática no se interpretan.
 
-Los números JSON usan la representación estándar de Python (`int`/`float`), sin
-conversiones científicas. La representación decimal léxica y su precisión
-arbitraria no se conservan en un `float`; los bytes originales permanecen en la
-respuesta durante la inspección. La política de precisión deberá revisarse antes
-de consumir atributos científicos reales o persistir representaciones derivadas.
+Desde el PASO 83-B se distingue `PrecisionNumerica.BINARIA_COMPATIBLE`, por defecto
+para conservar las interfaces anteriores (`int`/`float`), de `DECIMAL_EXACTA`, optativa
+(`int`/`Decimal`). Ambos modos leen temporalmente los decimales de forma exacta para
+comprobar la estructura; la conversión binaria solo se aplica después. La política
+queda en `PaginaValidada.precision` y `ResultadoVector.precision`, fuera de la
+identidad de consulta. No cambia parámetros, versión del esquema ni huella de bytes.
+
+El modo exacto conserva el valor decimal finito dentro de sus presupuestos, sin
+operaciones científicas ni dependencia de la precisión del contexto decimal. No
+certifica representabilidad IEEE de Single/Double, rangos científicos ni exactitud
+instrumental. El modo binario puede redondear cifras y colapsar vértices cercanos;
+no debe usarse para exigir preservación numérica exacta. No convierte un decimal
+no nulo en cero silenciosamente. La salida científica futura requiere revisar la
+política explícita; para el piloto se propone el modo exacto.
+
+Ningún modo conserva necesariamente la notación textual: los bytes originales
+permanecen en la respuesta durante la inspección y son la evidencia de representación
+exacta. No hay serializador Decimal ni persistencia nuevos. `json.dumps` no admite
+Decimal por defecto; convertirlo a `float` o texto no reconstruye el recurso original.
 
 ## 5. Geometrías y CRS
 
@@ -122,7 +137,8 @@ conservan como evidencia; no se rellenan con geometrías inventadas.
 
 El alcance implementado es `esriGeometryPolygon` lineal XY: anillos no vacíos,
 al menos cuatro posiciones por anillo, cierre explícito, dos números finitos por
-posición y presupuestos por entidad/página. No se reordena, orienta, simplifica
+posición y presupuestos por entidad/página. El cierre se contrasta con valores
+decimales exactos, antes del redondeo compatible. No se reordena, orienta, simplifica
 ni repara. Se rechazan curvas, Z/M, cuantización `transform` y propiedades de
 geometría ajenas al subconjunto soportado.
 
@@ -206,7 +222,8 @@ abre un archivo para comprobar integridad física ni se confirma un original RAW
 ## 8. Presupuestos de seguridad
 
 Valores locales por defecto de `LimitesVector`; todos son configurables con
-enteros positivos. Profundidad máxima configurable: 64. Otros presupuestos tienen
+enteros positivos. Los nuevos topes numéricos solo pueden reducirse. Profundidad
+máxima configurable: 64. Los demás presupuestos tienen
 techo administrativo de 536870912 unidades; no conviene elevarlos sin medición.
 
 | Presupuesto | Valor por defecto |
@@ -217,6 +234,8 @@ techo administrativo de 536870912 unidades; no conviene elevarlos sin medición.
 | Elementos por lista | 100000 |
 | Propiedades por objeto | 256 |
 | Caracteres por cadena | 65536 |
+| Caracteres de token decimal, incluido signo/exponente | 256 |
+| Valor absoluto del exponente decimal escrito y almacenado | 4096 |
 | Entidades por página | 2000 |
 | Atributos por entidad | 128 |
 | Anillos por entidad | 256 |
@@ -228,6 +247,9 @@ techo administrativo de 536870912 unidades; no conviene elevarlos sin medición.
 | Memoria auxiliar contabilizada | 8388608 (8 MiB) |
 
 El contrato de campos admite como máximo 128 descriptores y solo dimensiones XY.
+Los topes numéricos se comprueban antes de construir Decimal y antes de convertir
+a float. No son umbrales ambientales. El inspector de metadatos mantiene su lector
+binario previo, sin estos nuevos topes vectoriales ni modificación de límites HTTP.
 La copia inmutable de una geometría tiene un techo adicional de 500000 nodos y
 64 niveles, también al construirla directamente; agotarlo produce un estado
 limitado, sin atribuir un error de sintaxis al JSON válido.
@@ -243,6 +265,14 @@ una cota de RSS**. No incluye el cuerpo, árbol JSON y snapshot de la página ac
 que tienen sus presupuestos propios. El parser no es incremental: materializa
 una página acotada. Las mediciones `tracemalloc` sintéticas no garantizan memoria
 en todos los intérpretes o entradas reales.
+
+Desde el PASO 83-B también se contabiliza un eco de solicitud que sea un objeto
+distinto: 4096 bytes más ocho veces los caracteres de sus parámetros. Si no cabe,
+se omite explícitamente `solicitud_observada` y se registra
+`eco_omitido_por_limite_auxiliar`, sin hash ni inspección del cuerpo. Una
+contradicción ya detectable permanece INCONSISTENTE; si el eco solo es otra copia
+igual de grande, se detiene INCOMPLETA_POR_LIMITES. No se conserva metadata ajena
+por encima de la cuota para completar el recibo.
 
 Las fixtures se consumen con iteradores, sin acumular cuerpos o geometrías. Si
 el llamador crea una lista con todas las páginas, esa memoria ya existe fuera del
@@ -332,7 +362,7 @@ El dictamen del prototipo es **APTO CON RESTRICCIONES** para revisión de arquit
 y ensayos sintéticos. No autoriza un piloto institucional ni afirma que INGEMMET
 haya servido o paginado entidades.
 
-## 13. Verificación final del incremento
+## 13. Verificación histórica del PASO 83-A
 
 Entorno comprobado mediante el intérprete de `.venv`: Python **3.15.1**, HTTPX
 **0.28.1** y SQLite **3.53.4**. No se instalaron dependencias.
@@ -392,3 +422,11 @@ real y no se accedió a RAW, staging o SQLite operativos. No se verificaron sus
 hashes, precisamente para respetar la exclusión de acceso. No se modificaron
 `main.py`, `.gitignore` ni `.venv`; no hubo descargas, migraciones, commits o push.
 Quedan pendientes las decisiones y condiciones del piloto de la sección 12.
+
+## 14. Auditoría del PASO 83-B
+
+El [informe de precisión e integridad](auditoria_vectorial_paso83b.md) registra los
+defectos reproducidos, correcciones y regresiones. El
+[protocolo institucional propuesto](protocolo_piloto_arcgis_paso83b.md) contiene la
+matriz de permisos y una propuesta de un solo GET, **sin ejecución ni autorización**.
+No se ha integrado HTTP→RAW ni cambiado la clasificación documental institucional.

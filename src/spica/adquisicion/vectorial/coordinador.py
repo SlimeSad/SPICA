@@ -4,7 +4,7 @@ from threading import Event
 
 from .modelos import (
     ConsultaVector, EstadoCompletitud as EC, EstadoPagina as EP, EstrategiaPaginacion as ES,
-    EvidenciaConjunto, LimitesVector, ReciboPagina, ResultadoVector, SolicitudPagina,
+    EvidenciaConjunto, LimitesVector, ReciboPagina, ResultadoVector, SolicitudPagina, PrecisionNumerica,
 )
 from .simulado import TransporteSintetico
 from .validador import validar_featureset
@@ -14,7 +14,8 @@ def coordinar(consulta: ConsultaVector, transporte: TransporteSintetico, *,
               estrategia: ES = ES.OFFSET, tamano_pagina: int = 100,
               evidencia: EvidenciaConjunto | None = None,
               limites: LimitesVector | None = None,
-              cancelacion: Event | None = None) -> ResultadoVector:
+              cancelacion: Event | None = None,
+              precision: PrecisionNumerica = PrecisionNumerica.BINARIA_COMPATIBLE) -> ResultadoVector:
     """Las peticiones son declaraciones; el único transporte admitido es sintético.
 
     COMPLETA_COMPROBADA solo se refiere a la instantánea inventada y a la consulta
@@ -28,6 +29,8 @@ def coordinar(consulta: ConsultaVector, transporte: TransporteSintetico, *,
         raise TypeError("Evidencia tipada requerida")
     if cancelacion is not None and type(cancelacion) is not Event:
         raise TypeError("Cancelación tipada requerida")
+    if type(precision) is not PrecisionNumerica:
+        raise TypeError("Política numérica tipada requerida")
     limites = limites if limites is not None else LimitesVector()
     if type(tamano_pagina) is not int or not 1 <= tamano_pagina <= limites.entidades_pagina:
         raise ValueError("Tamaño de página fuera de límites")
@@ -40,6 +43,8 @@ def coordinar(consulta: ConsultaVector, transporte: TransporteSintetico, *,
     bytes_observados = 0
     auxiliares_recibos, diagnosticos = 0, []
     limitaciones = ["sin_validacion_topologica_o_cientifica", "solo_fuentes_sinteticas_sin_persistencia"]
+    if precision is PrecisionNumerica.BINARIA_COMPATIBLE:
+        limitaciones.append("salida_binaria_sin_garantia_de_precision_decimal_exacta")
     if evidencia is None or not evidencia.instantanea_consistente:
         limitaciones.append("sin_garantia_de_instantanea_consistente")
     ids = evidencia.object_ids if evidencia is not None else None
@@ -49,7 +54,8 @@ def coordinar(consulta: ConsultaVector, transporte: TransporteSintetico, *,
 
     def terminar(e, *codigos):
         return ResultadoVector(consulta, evidencia, estrategia, e, tuple(recibos), total_entidades,
-                               bytes_observados, total_bytes, tuple(diagnosticos) + codigos, tuple(limitaciones), limites)
+                               bytes_observados, total_bytes, tuple(diagnosticos) + codigos, tuple(limitaciones), limites,
+                               precision)
 
     if cancelacion is not None and cancelacion.is_set():
         return terminar(EC.PARCIAL, "operacion_cancelada")
@@ -91,6 +97,18 @@ def coordinar(consulta: ConsultaVector, transporte: TransporteSintetico, *,
         if respuesta is None:
             return terminar(EC.PARCIAL if total_entidades else EC.DESCONOCIDA, "fixture_agotada_sin_prueba_de_completitud")
         bytes_observados += len(respuesta.contenido)
+        eco = respuesta.solicitud
+        if eco is not solicitud:
+            coste_eco = 4096 + 8 * sum(len(k) + len(v) for k, v in eco.parametros.items())
+            if cuota + coste_eco > limites.bytes_auxiliares:
+                # No retener parámetros inesperados que el recibo no presupuestó.
+                recibos.append(ReciboPagina(solicitud, respuesta.respuesta_id, respuesta.obtenida_utc,
+                                            None, len(respuesta.contenido), 0, EP.NO_INSPECCIONADA, None))
+                if eco != solicitud:
+                    return terminar(EC.INCONSISTENTE, "discontinuidad_de_solicitud",
+                                     "eco_omitido_por_limite_auxiliar")
+                return terminar(EC.INCOMPLETA_POR_LIMITES, "eco_omitido_por_limite_auxiliar")
+            coste_recibo += coste_eco
 
         def sin_inspeccion():
             recibos.append(ReciboPagina(solicitud, respuesta.respuesta_id, respuesta.obtenida_utc,
@@ -110,7 +128,8 @@ def coordinar(consulta: ConsultaVector, transporte: TransporteSintetico, *,
         if total_bytes + len(respuesta.contenido) > limites.bytes_total:
             sin_inspeccion()
             return terminar(EC.INCOMPLETA_POR_LIMITES, "limite_bytes_total")
-        pagina = validar_featureset(respuesta, consulta.contrato, limites=limites, cancelacion=cancelacion)
+        pagina = validar_featureset(respuesta, consulta.contrato, limites=limites,
+                                    cancelacion=cancelacion, precision=precision)
         total_bytes += pagina.bytes_recibidos
         recibos.append(ReciboPagina(solicitud, respuesta.respuesta_id, respuesta.obtenida_utc,
                                     pagina.sha256, pagina.bytes_recibidos, len(pagina.entidades),
@@ -187,5 +206,5 @@ def coordinar(consulta: ConsultaVector, transporte: TransporteSintetico, *,
             # Avanzar por entidades observadas evita saltos tras página corta.
             offset += len(oids)
         # Liberar geometrías y cuerpo antes de solicitar otra página.
-        del pagina, respuesta, sin_inspeccion
+        del pagina, respuesta, sin_inspeccion, eco
     return terminar(EC.INCOMPLETA_POR_LIMITES, "limite_paginas")
