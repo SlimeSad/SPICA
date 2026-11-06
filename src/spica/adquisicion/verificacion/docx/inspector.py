@@ -49,7 +49,7 @@ def _resultado(c, estado, codigo=None, componentes=None):
         parrafos, tablas, propiedades, tuple(c.advertencias),
         (DiagnosticoDOCX(codigo),) if codigo and estado is E.DOCUMENTO_RECHAZADO else (),
         tuple(c.omitidas) + ((DiagnosticoDOCX(codigo),) if codigo and estado is E.INSPECCION_INCOMPLETA else ()),
-        consumo=_consumo(c))
+        consumo=_consumo(c), hipervinculos_omitidos=tuple(c.hipervinculos))
 
 
 def _evaluar(datos, c):

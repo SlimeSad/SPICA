@@ -29,6 +29,7 @@ class Control:
         self.ctx = {"nodos_xml": 0, "descomprimidos": 0}
         self.omitidas, self.advertencias = [], []
         self.partes, self.relaciones = [], []
+        self.hipervinculos = []
         self.incompleta = False
         self.verificados = self.lecturas0 = self.lecturas1 = self.lecturas2 = 0
 

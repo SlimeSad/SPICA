@@ -1,5 +1,10 @@
 # PASO 84-H: adquisición controlada DOCX PNDA/SENAMHI
 
+Actualización offline **84-HB**, 2026-11-06: véase el
+[diagnóstico de relaciones y reevaluación](auditoria_relaciones_docx_paso84hb.md)
+y la sección 9. Los resultados del GET y del inspector 0.1.0 que siguen son el
+registro histórico del 84-H; no se reemplazan sus manifiestos privados.
+
 Fecha: **2026-11-06**. Dictamen: **APTO CON RESTRICCIONES para conservación de
 evidencia técnica; no habilitado para reconciliación del contenido documental**.
 Se completó una adquisición HTTP y su conservación física. El inspector devolvió
@@ -258,3 +263,44 @@ No se accedió al CSV/XLSX institucional, RAW, staging o SQLite operativos. No s
 hicieron migraciones o escrituras en ellos ni se revalidaron sus huellas: esta
 confirmación describe las operaciones de la sesión, no cambios de terceros.
 Se conserva la evidencia y se espera revisión, sin integración científica automática.
+
+## 9. Actualización 84-HB: relaciones externas y límite nuevo
+
+El 84-H quedó registrado en **944151a**, desde el que comenzó limpio el 84-HB.
+Sin conexiones o descargas adicionales se cotejaron los seis archivos originales:
+tamaños, SHA-256 y posteriormente firmas/modos permanecieron coincidentes.
+No se escribió en su directorio ni se cambiaron los JSON históricos.
+
+El diagnóstico acotado encontró tres relaciones de tipo exacto OOXML `hyperlink`,
+`TargetMode="External"`, en `word/_rels/document.xml.rels`, origen
+`word/document.xml`. La primera externa en el orden XML era **rId7 (mailto)**;
+las otras eran **rId6 (HTTP)** y **rId5 (HTTPS)**. Todas se usan en elementos
+`w:hyperlink` de párrafos locales dentro de la primera tabla. Los destinos no
+se resolvieron ni publicaron. La política 0.1.0 rechazaba cualquier External,
+incluidos estos enlaces pasivos; no era una prueba de contenido malicioso.
+
+Tras **19 pruebas nuevas** y las **58 anteriores** del inspector, y una suite
+completa de **1520 aprobadas, 0 fallos/errores**, se reevaluó una vez el mismo
+archivo con el inspector **0.2.0**. La excepción nueva es cerrada a hipervínculos
+pasivos coherentes de tipo/origen/uso verificados, con destinos HTTP/HTTPS o
+mailto de perfil limitado, omitidos sin URI en el resultado. Imágenes, plantillas,
+OLE, contenido alternativo y relaciones desconocidas siguen bloqueados.
+
+Reevaluación UTC: **2026-11-06T12:58:47.540932+00:00** a
+**2026-11-06T12:58:47.670684+00:00**. Resultado:
+**INSPECCION_INCOMPLETA**, diagnóstico
+`campos_revisiones_o_caracteristicas_no_interpretadas` en **word/document.xml**.
+Se observaron 12 partes, 9 relaciones internas y 3 enlaces externos omitidos;
+**0 párrafos, 0 tablas y 5 propiedades técnicas**, sin publicar sus valores o
+convertirlos en edición/vigencia. La conservación física fue comprobada.
+
+Se detuvo el trabajo sobre el documento ante esta restricción nueva, sin modificar
+otros controles o volver a inspeccionarlo para conseguir aceptación. El código
+genérico no permite afirmar si la causa es un campo, revisión u otra extensión;
+no se inventa una causa más específica ni se afirma ausencia de información.
+
+La descarga original sigue **COMPLETA** y la inspección del contenido sigue sin
+ser satisfactoria. **APTO CON RESTRICCIONES**, sin habilitación para reconciliación
+documental. Las 29 brechas conservan sus estados. El
+[informe 84-HB](auditoria_relaciones_docx_paso84hb.md) detalla controles, referencias,
+pruebas y condiciones de revisión; no se autorizó procesamiento científico.

@@ -14,6 +14,7 @@ from .._xlsx import (
 )
 from ._control import FuenteZIP, _Fallo, exigir
 from ._extraccion import Extractor, Q, R, detectar
+from ._hipervinculos import clasificar, finalizar, registrar_usos
 from .modelos import ParteDOCX, RelacionDOCX
 
 BASE = "application/vnd.openxmlformats-officedocument."
@@ -194,7 +195,7 @@ def inspeccionar_paquete(datos, c):
         c.liberar(carga)
     archivos = {i.filename: i for i in infos if not i.is_dir()}
     nombres = set(archivos)
-    relaciones, mapas, grafo = c.relaciones, {}, {}
+    relaciones, mapas, grafo, pendientes = c.relaciones, {}, {}, {}
     ext = Extractor(c)
     partes = c.partes
     with FuenteZIP(datos, c, 2) as segunda, ZipFile(segunda) as z:
@@ -218,15 +219,21 @@ def inspeccionar_paquete(datos, c):
                 _control_plano(a, RELACIONES, {
                     "Relationship": {"Id", "Type", "Target", "TargetMode"}}, c)
                 for e in a:
-                    exigir(e.get("TargetMode") != "External", "relacion_externa_no_admitida")
-                    exigir(not urlsplit(e.get("Target", "")).fragment, "fragmento_en_relacion_no_admitido")
+                    if e.get("TargetMode") != "External":
+                        exigir(not urlsplit(e.get("Target", "")).fragment, "fragmento_en_relacion_no_admitido")
                 rs = _relaciones(a, n, nombres, {})
                 fuente = _fuente_rel(n)
                 mapas[fuente] = rs
                 for rid, (tipo, destino) in rs.items():
-                    c.limite(len(relaciones) < c.limites.max_referencias, "limite_relaciones")
-                    exigir(destino is not None, "relacion_externa_no_admitida")
+                    c.limite(len(relaciones) + len(pendientes) < c.limites.max_referencias, "limite_relaciones")
                     exigir(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.-]{0,127}", rid), "identificador_relacion_no_admitido")
+                    if destino is None:
+                        elemento = next(e for e in a if e.get("Id") == rid)
+                        exigir(elemento.get("TargetMode") == "External", "modo_hipervinculo_incoherente")
+                        esquema = clasificar(tipo, elemento.get("Target"), fuente, c)
+                        c.guardar_textos(n, rid, tipo, fuente, esquema)
+                        pendientes[fuente, rid] = dict(parte=n, esquema=esquema, usos=[])
+                        continue
                     exigir(tipo in REL_TIPOS and tipos.get(destino) in REL_TIPOS[tipo], "tipo_relacion_no_admitido")
                     exigir((fuente == "") == (tipo in (R + "/officeDocument", RELACIONES + "/metadata/core-properties",
                         R + "/extended-properties", R + "/custom-properties")), "origen_relacion_incoherente")
@@ -272,6 +279,7 @@ def inspeccionar_paquete(datos, c):
             with arbol(z, i, c) as a:
                 exigir(a.tag == raiz_esperada, "raiz_ooxml_no_admitida")
                 ambigua = detectar(a, n, c, mapas.get(n, {}))
+                registrar_usos(a, n, pendientes, c, ext.ref)
                 if n in ("word/styles.xml", "word/settings.xml") and ambigua:
                     global_ambigua = True
                 es_texto = n == "word/document.xml" or n.startswith(("word/header", "word/footer")) or n in (
@@ -291,6 +299,7 @@ def inspeccionar_paquete(datos, c):
             ext.parrafos.clear(); ext.tablas.clear()
             c.diagnostico("formato_global_ambiguo_texto_omitido", omision=True, incompleta=True)
         exigir(ext.usos_notas <= ext.ids_notas, "nota_referenciada_ausente")
+        finalizar(pendientes, c)
         # Solo promover tamaños/CRC tras las lecturas observables de cada parte.
         for n in sorted(nombres):
             c.paso()

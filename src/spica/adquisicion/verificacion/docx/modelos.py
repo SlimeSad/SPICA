@@ -7,7 +7,7 @@ import math
 from ..modelos import PoliticaEstructura
 
 
-VERSION_INSPECTOR = "0.1.0"
+VERSION_INSPECTOR = "0.2.0"
 
 
 class EstadoInspeccionDOCX(Enum):
@@ -106,6 +106,18 @@ class RelacionDOCX:
 
 
 @dataclass(frozen=True)
+class HipervinculoOmitidoDOCX:
+    """Destino externo descartado; solo procedencia y usos del XML local."""
+    parte_relaciones: str
+    identificador: str
+    tipo: str
+    target_mode: str
+    parte_origen: str
+    tipo_destino: str  # http, https o mailto; nunca una URI o dirección.
+    referencias: tuple[ReferenciaDOCX, ...]
+
+
+@dataclass(frozen=True)
 class ParrafoDOCX:
     referencia: ReferenciaDOCX
     texto: str = field(repr=False)
@@ -183,6 +195,7 @@ class ResultadoDOCX:
     conservacion_comprobada: bool | None = None
     consumo: ConsumoDOCX = field(default_factory=ConsumoDOCX)
     version_inspector: str = field(default=VERSION_INSPECTOR, init=False)
+    hipervinculos_omitidos: tuple[HipervinculoOmitidoDOCX, ...] = ()
 
     def diagnostico_publico(self):
         """Sin texto, rutas locales, relaciones recibidas o metadatos personales."""
@@ -190,5 +203,6 @@ class ResultadoDOCX:
             tamano=self.identidad.tamano if self.identidad else None,
             sha256=self.identidad.sha256 if self.identidad else None,
             partes=len(self.partes), parrafos=len(self.parrafos), tablas=len(self.tablas),
+            hipervinculos_omitidos=len(self.hipervinculos_omitidos),
             causas=tuple(d.codigo for d in self.causas_rechazo),
             omitidas=tuple(d.codigo for d in self.operaciones_omitidas))

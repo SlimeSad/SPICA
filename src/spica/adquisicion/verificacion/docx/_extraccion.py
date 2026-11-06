@@ -67,8 +67,11 @@ def detectar(arbol, parte, control, relaciones):
             if a.startswith("{" + R + "}"):
                 exigir(valor in relaciones, "referencia_rid_ausente")
                 clase = relaciones[valor][0].rsplit("/", 1)[-1]
-                esperadas = {"headerReference": "header", "footerReference": "footer", "blip": "image"}
+                esperadas = {"headerReference": "header", "footerReference": "footer", "blip": "image", "hyperlink": "hyperlink"}
                 exigir(local in esperadas and clase == esperadas[local], "uso_relacion_fuera_del_perfil")
+                if local == "hyperlink":
+                    exigir(e.tag == Q + "hyperlink" and a == "{" + R + "}id"
+                            and relaciones[valor] == (R + "/hyperlink", None), "uso_relacion_fuera_del_perfil")
     if es_texto and not ambigua:
         padres = {
             "body": {"document"}, "p": {"body", "hdr", "ftr", "tc", "footnote", "endnote"},
