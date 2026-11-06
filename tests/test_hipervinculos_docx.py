@@ -53,7 +53,7 @@ class HipervinculosDOCXTests(unittest.TestCase):
         self.assertIs(r.estado,E.DOCUMENTO_VALIDADO_EN_ALCANCE)
         self.assertEqual(r.parrafos[0].texto,'Texto sintetico')
         self.assertEqual(r.hipervinculos_omitidos,())
-        self.assertEqual(r.version_inspector,'0.2.0')
+        self.assertEqual(r.version_inspector,'0.2.1')
 
     def test_http_https_mailto_son_omitidos_sin_destino_en_resultado(self):
         for destino,esquema in (('http://prueba.invalid/ruta','http'),('https://prueba.invalid/ruta','https'),

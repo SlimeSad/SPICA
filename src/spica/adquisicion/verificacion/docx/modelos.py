@@ -7,7 +7,7 @@ import math
 from ..modelos import PoliticaEstructura
 
 
-VERSION_INSPECTOR = "0.2.0"
+VERSION_INSPECTOR = "0.2.1"
 
 
 class EstadoInspeccionDOCX(Enum):

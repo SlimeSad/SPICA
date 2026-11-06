@@ -133,14 +133,29 @@ def entrada_observable(z, info):
 
 
 @contextmanager
-def arbol(z, info, c):
+def arbol(z, info, c, *, namespaces_raiz=None):
     c.xml += 1
     c.limite(c.xml <= c.limites.max_xml, "limite_cantidad_xml")
     c.limite(info.file_size <= c.limites.zip.max_bytes_xml, "limite_xml")
     c.reservar(info.file_size)
+    coste_namespaces = 0
     try:
         xml = _XML(c.limites.zip, c.ctx, True)
         xml.parser.CharacterDataHandler = xml.arbol.data
+        if namespaces_raiz is not None:
+            exigir(not namespaces_raiz, "contexto_namespaces_no_vacio")
+            def declarar(prefijo, uri):
+                nonlocal coste_namespaces
+                c.paso()
+                if xml.profundidad != 0:
+                    return  # mc:Ignorable solo se admite en la raíz; no hay herencia MC.
+                c.limite(len(namespaces_raiz) < 64, "limite_namespaces_raiz")
+                prefijo, uri = prefijo or "", uri or ""
+                coste = len(prefijo.encode("utf-8")) + len(uri.encode("utf-8"))
+                c.reservar(coste)
+                coste_namespaces += coste
+                namespaces_raiz[prefijo] = uri
+            xml.parser.StartNamespaceDeclHandler = declarar
         def prohibir_instruccion(*args):
             raise _Fallo("instruccion_xml_no_admitida")
         xml.parser.ProcessingInstructionHandler = prohibir_instruccion
@@ -156,7 +171,9 @@ def arbol(z, info, c):
         exigir(reales == info.file_size, "tamano_descomprimido_no_coincide")
         yield xml.cerrar()
     finally:
-        c.liberar(info.file_size)
+        if namespaces_raiz is not None:
+            namespaces_raiz.clear()
+        c.liberar(info.file_size + coste_namespaces)
 
 
 def _fuente_rel(nombre):
@@ -276,9 +293,10 @@ def inspeccionar_paquete(datos, c):
                         "firma_imagen_no_admitida")
                 c.diagnostico("imagen_no_renderizada_ni_interpretada", n, omision=True)
                 continue
-            with arbol(z, i, c) as a:
+            namespaces_raiz = {}
+            with arbol(z, i, c, namespaces_raiz=namespaces_raiz) as a:
                 exigir(a.tag == raiz_esperada, "raiz_ooxml_no_admitida")
-                ambigua = detectar(a, n, c, mapas.get(n, {}))
+                ambigua = detectar(a, n, c, mapas.get(n, {}), namespaces_raiz)
                 registrar_usos(a, n, pendientes, c, ext.ref)
                 if n in ("word/styles.xml", "word/settings.xml") and ambigua:
                     global_ambigua = True

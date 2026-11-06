@@ -8,6 +8,16 @@ from .modelos import CeldaDOCX, FilaDOCX, ParrafoDOCX, PropiedadDOCX, Referencia
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 Q = "{" + W + "}"
+MC = "http://schemas.openxmlformats.org/markup-compatibility/2006"
+W14 = "http://schemas.microsoft.com/office/word/2010/wordml"
+# Solo declaraciones: estos namespaces NO habilitan elementos o atributos nuevos.
+NAMESPACES_DECLARABLES = frozenset({W14,
+    "http://schemas.microsoft.com/office/word/2012/wordml",
+    "http://schemas.microsoft.com/office/word/2015/wordml/symex",
+    "http://schemas.microsoft.com/office/word/2016/wordml/cid",
+    "http://schemas.microsoft.com/office/word/2018/wordml",
+    "http://schemas.microsoft.com/office/word/2018/wordml/cex",
+    "http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing"})
 
 # Perfil cerrado de estructura y formato pasivo para partes con texto.
 PASIVOS = set("""document body hdr ftr footnotes footnote endnotes endnote p pPr r rPr t
@@ -43,7 +53,26 @@ def rutas(arbol):
     return visitar(arbol, "/" + arbol.tag + "[1]")
 
 
-def detectar(arbol, parte, control, relaciones):
+def _metadato_pasivo(arbol, elemento, nombre, valor, namespaces_raiz, parte, control):
+    """Reconocer metadatos exactos sin elegir texto, revisiones o alternativas."""
+    if nombre == "{" + MC + "}Ignorable":
+        exigir(elemento is arbol and arbol.tag == Q + "document", "contexto_mc_ignorable_no_admitido")
+        prefijos = valor.split()
+        exigir(0 < len(prefijos) <= 7 and len(prefijos) == len(set(prefijos))
+                and all(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.-]{0,31}", p)
+                        and namespaces_raiz.get(p) in NAMESPACES_DECLARABLES for p in prefijos),
+                "declaracion_mc_ignorable_no_admitida")
+        control.diagnostico("declaracion_mc_ignorable_sin_procesamiento", parte, omision=True)
+        return True
+    if nombre in ("{" + W14 + "}paraId", "{" + W14 + "}textId"):
+        exigir(elemento.tag in (Q + "p", Q + "tr") and re.fullmatch(r"[0-9A-Fa-f]{8}", valor),
+                "identificador_word2010_fuera_del_perfil")
+        control.diagnostico("identificadores_word2010_no_interpretados", parte, omision=True)
+        return True
+    return False
+
+
+def detectar(arbol, parte, control, relaciones, namespaces_raiz=None):
     """No interpreta campos. Desconocidos omiten toda la parte textual."""
     ambigua = False
     es_texto = parte == "word/document.xml" or parte.startswith(("word/header", "word/footer")) or parte in (
@@ -63,7 +92,8 @@ def detectar(arbol, parte, control, relaciones):
             exigir(e.get("{" + R + "}id") is not None, "referencia_rid_ausente")
         for a, valor in e.attrib.items():
             if es_texto and not a.startswith((Q, "{" + R + "}", "{http://www.w3.org/XML/1998/namespace}")):
-                ambigua = True
+                if not _metadato_pasivo(arbol, e, a, valor, namespaces_raiz or {}, parte, control):
+                    ambigua = True
             if a.startswith("{" + R + "}"):
                 exigir(valor in relaciones, "referencia_rid_ausente")
                 clase = relaciones[valor][0].rsplit("/", 1)[-1]
