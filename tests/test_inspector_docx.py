@@ -2,6 +2,7 @@
 
 from dataclasses import FrozenInstanceError, replace
 from io import BytesIO
+import binascii
 import hashlib
 from pathlib import Path
 import shutil
@@ -102,6 +103,28 @@ class InspectorDOCXTests(unittest.TestCase):
         p = partes('<w:p><w:r><w:t xml:space="preserve"> 00123 </w:t><w:tab/></w:r>'
             '<w:r><w:t>texto</w:t><w:br/><w:t>final</w:t><w:cr/></w:r></w:p>')
         self.assertEqual(self.inspeccionar(p).parrafos[0].texto, " 00123 \ttexto\nfinal\n")
+
+    def test_tabuladores_de_formato_no_inventan_texto(self):
+        formato = '<w:pPr><w:tabs><w:tab w:val="left" w:pos="720"/></w:tabs></w:pPr>'
+        p = partes('<w:p>' + formato + '<w:hyperlink w:anchor="destino">'
+            '<w:r><w:t>literal</w:t><w:tab/><w:t>final</w:t></w:r></w:hyperlink></w:p>')
+        r = self.inspeccionar(p)
+        self.assertIs(r.estado, E.DOCUMENTO_VALIDADO_EN_ALCANCE)
+        self.assertEqual([x.texto for x in r.parrafos], ['literal\tfinal'])
+        self.assertEqual(self.inspeccionar(partes('<w:p>' + formato + '</w:p>')).parrafos[0].texto, '')
+
+    def test_contextos_inline_invalidos_no_se_omiten_como_validos(self):
+        for cuerpo in (
+            '<w:sectPr><w:hyperlink><w:r><w:t>omitido</w:t></w:r></w:hyperlink></w:sectPr>',
+            '<w:p><w:pPr><w:br/></w:pPr><w:r><w:t>literal</w:t></w:r></w:p>',
+            '<w:p><w:r><w:pStyle w:val="fuera"/><w:t>literal</w:t></w:r></w:p>',
+            '<w:p><w:hyperlink><w:hyperlink><w:r><w:t>anidado</w:t></w:r></w:hyperlink></w:hyperlink></w:p>',
+        ):
+            with self.subTest(cuerpo=cuerpo):
+                r = self.inspeccionar(partes(cuerpo))
+                self.assertIs(r.estado, E.DOCUMENTO_RECHAZADO)
+                self.assertEqual(r.parrafos, ())
+                self.assertEqual(r.causas_rechazo[0].codigo, 'estructura_textual_incoherente')
 
     def test_titulo_por_estilo_documental_sin_inferir_oficialidad(self):
         p = partes('<w:p><w:pPr><w:pStyle w:val="TituloSintetico"/></w:pPr><w:r><w:t>Titulo</w:t></w:r></w:p>')
@@ -219,6 +242,61 @@ class InspectorDOCXTests(unittest.TestCase):
         self.assertIs(r.estado, E.DOCUMENTO_RECHAZADO)
         self.assertEqual(r.causas_rechazo[0].codigo, "zip_tamanos_locales_incoherentes")
 
+    def test_tamano_y_crc_de_prefijo_no_ocultan_bytes_sobrantes(self):
+        for metodo in (ZIP_STORED, ZIP_DEFLATED):
+            for nombre in ('word/document.xml', 'word/media/image1.png'):
+                with self.subTest(metodo=metodo, nombre=nombre):
+                    p = partes()
+                    if nombre.endswith('.png'):
+                        agregar(p, nombre, b'\x89PNG\r\n\x1a\nfixture', 'image/png', 'image')
+                    original = p[nombre]
+                    p[nombre] += b'EXCESO_SINTETICO'
+                    b = bytearray(zip_docx(p, compresion=metodo))
+                    with ZipFile(BytesIO(b)) as z:
+                        info = z.getinfo(nombre)
+                    # Ambas cabeceras concuerdan entre sí y con el CRC del prefijo.
+                    struct.pack_into('<I', b, info.header_offset + 14, binascii.crc32(original))
+                    struct.pack_into('<I', b, info.header_offset + 22, len(original))
+                    cursor = b.index(b'PK\x01\x02')
+                    while b[cursor:cursor+4] == b'PK\x01\x02':
+                        ln, le, lc = struct.unpack_from('<HHH', b, cursor+28)
+                        if b[cursor+46:cursor+46+ln] == nombre.encode():
+                            struct.pack_into('<I', b, cursor+16, binascii.crc32(original))
+                            struct.pack_into('<I', b, cursor+24, len(original))
+                            break
+                        cursor += 46 + ln + le + lc
+                    else:
+                        self.fail('El fixture no localizó su entrada central')
+                    r = inspeccionar_docx_bytes(bytes(b))
+                    self.assertIs(r.estado, E.DOCUMENTO_RECHAZADO)
+                    self.assertEqual(r.parrafos, ())
+                    self.assertEqual(r.partes, ())
+
+    def test_deflate_sin_marcador_final_no_basta_con_tamano_y_crc(self):
+        b = bytearray(zip_docx(compresion=ZIP_DEFLATED))
+        with ZipFile(BytesIO(b)) as z:
+            info = z.getinfo('word/document.xml')
+        ln, le = struct.unpack_from('<HH', b, info.header_offset + 26)
+        inicio = info.header_offset + 30 + ln + le
+        self.assertTrue(b[inicio] & 1)  # BFINAL del único bloque sintético.
+        b[inicio] &= 0xfe  # El contenido y CRC no cambian; falta el bloque final.
+        r = inspeccionar_docx_bytes(bytes(b))
+        self.assertIs(r.estado, E.DOCUMENTO_RECHAZADO)
+        self.assertEqual(r.causas_rechazo[0].codigo, 'flujo_deflate_incoherente')
+        self.assertEqual((r.parrafos, r.partes), ((), ()))
+        # Si CPython deja de ofrecer el estado, no se declara validación completa.
+        class SinEstado:
+            def __init__(self, archivo): self.archivo = archivo
+            def __getattr__(self, nombre):
+                if nombre == '_decompressor': raise AttributeError(nombre)
+                return getattr(self.archivo, nombre)
+            def __enter__(self): return self
+            def __exit__(self, *args): self.archivo.close()
+        abrir = ZipFile.open
+        def sin_estado(z, *args, **kw): return SinEstado(abrir(z, *args, **kw))
+        with patch.object(ZipFile, 'open', sin_estado):
+            self.assertIs(inspeccionar_docx_bytes(zip_docx(compresion=ZIP_DEFLATED)).estado, E.DOCUMENTO_RECHAZADO)
+
     def test_expansion_excesiva(self):
         b = zip_docx(partes(parrafo("A" * 80_000)), compresion=ZIP_DEFLATED)
         self.assertIs(inspeccionar_docx_bytes(b).estado, E.INSPECCION_INCOMPLETA)
@@ -258,6 +336,22 @@ class InspectorDOCXTests(unittest.TestCase):
         self.assertIs(r.estado,E.DOCUMENTO_RECHAZADO)
         self.assertNotIn("SECRETO_FICTICIO",repr(r))
         self.assertEqual(r.parrafos,())
+
+    def test_controles_ooxml_no_ignoran_contenido_anidado_o_desconocido(self):
+        for nombre, antes, despues in (
+            ('_rels/.rels', b'/></Relationships>', b'><Relationship Id="anidada" Type="fuera" '
+                b'Target="https://prohibido.invalid/?token=SECRETO_FICTICIO" TargetMode="External"/></Relationship></Relationships>'),
+            ('[Content_Types].xml', b'/></Types>', b'><objeto-no-admitido/></Override></Types>'),
+            ('_rels/.rels', b'Id="rPrincipal"', b'Id="rPrincipal" Extra="opaco"'),
+            ('[Content_Types].xml', b'</Types>', b'TEXTO_NO_ADMITIDO</Types>'),
+        ):
+            with self.subTest(nombre=nombre, despues=despues[:25]):
+                p = partes(); p[nombre] = p[nombre].replace(antes, despues)
+                r = self.inspeccionar(p)
+                self.assertIs(r.estado, E.DOCUMENTO_RECHAZADO)
+                self.assertEqual(r.causas_rechazo[0].codigo, 'control_ooxml_no_admitido')
+                self.assertEqual(r.parrafos, ())
+                self.assertNotIn('SECRETO_FICTICIO', repr(r))
 
     def test_macros_y_objetos_en_docx_con_marcadores_basicos_validos(self):
         for nombre,mime,clase in (("word/vbaProject.bin","application/vnd.ms-office.vbaProject","vbaProject"),

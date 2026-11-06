@@ -1,11 +1,12 @@
 """Perfil DOCX cerrado sobre los controles ZIP/XML compartidos existentes."""
 
 from contextlib import contextmanager
+from copy import copy
 import posixpath
 import re
 import struct
 from urllib.parse import urlsplit
-from zipfile import ZipFile
+from zipfile import ZipFile, ZIP_DEFLATED
 
 from .._xlsx import (
     CONTENIDOS, MIME_WORD, RELACIONES, _XML, _directorio_previo,
@@ -113,6 +114,24 @@ def _metadatos_zip(datos, c):
 
 
 @contextmanager
+def entrada_observable(z, info):
+    # ZipExtFile recorta a file_size: un byte testigo evita aceptar un prefijo
+    # cuyo tamaño y CRC falsificados oculten contenido descomprimido sobrante.
+    observable = copy(info)
+    observable.file_size = info.file_size + 1
+    with z.open(observable) as f:
+        yield f
+        if info.compress_type == ZIP_DEFLATED:
+            # ZipExtFile también puede aceptar un flujo sin marcador final.
+            # Perfil probado en CPython 3.15: si cambia esta interfaz privada,
+            # rechazar en vez de afirmar una comprobación que no se realizó.
+            decodificador = getattr(f, "_decompressor", None)
+            exigir(decodificador is not None and decodificador.eof
+                    and not decodificador.unused_data and not decodificador.unconsumed_tail
+                    and getattr(f, "_compress_left", None) == 0, "flujo_deflate_incoherente")
+
+
+@contextmanager
 def arbol(z, info, c):
     c.xml += 1
     c.limite(c.xml <= c.limites.max_xml, "limite_cantidad_xml")
@@ -125,7 +144,7 @@ def arbol(z, info, c):
             raise _Fallo("instruccion_xml_no_admitida")
         xml.parser.ProcessingInstructionHandler = prohibir_instruccion
         reales = 0
-        with z.open(info) as f:
+        with entrada_observable(z, info) as f:
             while b := f.read(c.limites.zip.tamano_bloque):
                 c.paso()
                 reales += len(b)
@@ -142,6 +161,18 @@ def arbol(z, info, c):
 def _fuente_rel(nombre):
     return "" if nombre == "_rels/.rels" else posixpath.join(
         posixpath.dirname(posixpath.dirname(nombre)), posixpath.basename(nombre)[:-5])
+
+
+def _control_plano(arbol, namespace, atributos, c):
+    """Tipos/relaciones no admiten árboles, texto o atributos opacos."""
+    exigir(not arbol.attrib and not (arbol.text or "").strip(), "control_ooxml_no_admitido")
+    for e in arbol:
+        c.paso()
+        nombre = e.tag.removeprefix("{" + namespace + "}")
+        exigir(e.tag == "{" + namespace + "}" + nombre and nombre in atributos
+                and not len(e) and set(e.attrib) <= atributos[nombre]
+                and not (e.text or "").strip() and not (e.tail or "").strip(),
+                "control_ooxml_no_admitido")
 
 
 def inspeccionar_paquete(datos, c):
@@ -168,6 +199,8 @@ def inspeccionar_paquete(datos, c):
     partes = c.partes
     with FuenteZIP(datos, c, 2) as segunda, ZipFile(segunda) as z:
         with arbol(z, archivos["[Content_Types].xml"], c) as a:
+            _control_plano(a, CONTENIDOS, {
+                "Default": {"Extension", "ContentType"}, "Override": {"PartName", "ContentType"}}, c)
             tipos = _tipos(a, nombres)
             admitidos = {"application/xml", MIME_RELS, MIME_CORE, MIME_WORD,
                 *(perfil(n)[0] for n in nombres if n != "[Content_Types].xml")}
@@ -179,11 +212,11 @@ def inspeccionar_paquete(datos, c):
             esperado, _ = perfil(n)
             exigir(n == "[Content_Types].xml" or tipos.get(n) == esperado, "tipo_de_parte_no_coincide")
             i = archivos[n]
-            c.guardar_textos(n, esperado, f"{i.CRC:08x}")
-            partes.append(ParteDOCX(n, esperado, i.compress_size, i.file_size, i.file_size, f"{i.CRC:08x}"))
             if not n.endswith(".rels"):
                 continue
             with arbol(z, i, c) as a:
+                _control_plano(a, RELACIONES, {
+                    "Relationship": {"Id", "Type", "Target", "TargetMode"}}, c)
                 for e in a:
                     exigir(e.get("TargetMode") != "External", "relacion_externa_no_admitida")
                     exigir(not urlsplit(e.get("Target", "")).fragment, "fragmento_en_relacion_no_admitido")
@@ -221,9 +254,17 @@ def inspeccionar_paquete(datos, c):
             _, raiz_esperada = perfil(n)
             if raiz_esperada is None:
                 c.limite(i.file_size <= 1_048_576, "limite_imagen_pasiva")
-                with z.open(i) as f:
-                    prefijo = f.read(8)
-                c.ctx["descomprimidos"] += len(prefijo)
+                reales, prefijo = 0, b""
+                with entrada_observable(z, i) as f:
+                    while b := f.read(c.limites.zip.tamano_bloque):
+                        c.paso()
+                        reales += len(b)
+                        c.ctx["descomprimidos"] += len(b)
+                        c.limite(reales <= 1_048_576, "limite_imagen_pasiva")
+                        c.limite(c.ctx["descomprimidos"] <= c.limites.zip.max_bytes_descomprimidos,
+                                 "limite_descompresion_real")
+                        if not prefijo: prefijo = b[:8]
+                exigir(reales == i.file_size, "tamano_descomprimido_no_coincide")
                 exigir(prefijo.startswith(b"\x89PNG\r\n\x1a\n") if n.endswith("png") else prefijo.startswith(b"\xff\xd8\xff"),
                         "firma_imagen_no_admitida")
                 c.diagnostico("imagen_no_renderizada_ni_interpretada", n, omision=True)
@@ -250,6 +291,13 @@ def inspeccionar_paquete(datos, c):
             ext.parrafos.clear(); ext.tablas.clear()
             c.diagnostico("formato_global_ambiguo_texto_omitido", omision=True, incompleta=True)
         exigir(ext.usos_notas <= ext.ids_notas, "nota_referenciada_ausente")
+        # Solo promover tamaños/CRC tras las lecturas observables de cada parte.
+        for n in sorted(nombres):
+            c.paso()
+            i = archivos[n]
+            esperado, _ = perfil(n)
+            c.guardar_textos(n, esperado, f"{i.CRC:08x}")
+            partes.append(ParteDOCX(n, esperado, i.compress_size, i.file_size, i.file_size, f"{i.CRC:08x}"))
         c.lecturas2 = segunda.leidos
     if not ext.parrafos:
         c.diagnostico("sin_parrafos_extraidos_en_alcance")

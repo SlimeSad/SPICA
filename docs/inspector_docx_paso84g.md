@@ -1,13 +1,14 @@
 # PASO 84-G: inspector seguro DOCX offline
 
-Fecha: **2026-11-05**. Dictamen: **APTO CON RESTRICCIONES** para el perfil local
+Elaboración inicial: **2026-11-05**. Reanudación y auditoría: **2026-11-06**.
+Dictamen: **APTO CON RESTRICCIONES** para el perfil local
 implementado y su revisión. No autoriza adquirir el DOCX institucional ni integra
 HTTP/RAW. Un documento validado dentro del alcance no acredita autenticidad,
 vigencia, equivalencia de ediciones o corrección científica.
 
 ## 1. Estado inicial y arquitectura
 
-Git comenzó limpio en `feature/suadc-http`, HEAD **`3ce6443`**,
+El desarrollo original comenzó limpio en `feature/suadc-http`, HEAD **`3ce6443`**,
 `SUADC: preparacion de metadatos DOCX PNDA`. El 84-F está registrado. Se revisaron
 los expedientes [84-D](auditoria_metadatos_pnda_paso84d.md),
 [84-E](inspeccion_diccionario_pnda_paso84e.md) y
@@ -16,13 +17,28 @@ los expedientes [84-D](auditoria_metadatos_pnda_paso84d.md),
 evidencias y referencias existentes. Entorno comprobado: Python **3.15.1** de
 `.venv`, HTTPX **0.28.1**. No se necesita HTTPX para este componente.
 
+La reanudación comenzó también limpia, en **`85a8c22`**, mensaje
+`WIP: desarrollo parcial del inspector DOCX paso 84-G`. Se comprobaron `git status`,
+`git log -5 --oneline` y el contenido de los ocho archivos del WIP, cotejándolos
+con ambas instrucciones del paso. El commit anterior real es **`3ce6443`**;
+`3e64443` en la instrucción de recuperación era una transposición del identificador.
+No se restauró, descartó ni reemplazó trabajo funcional.
+
+Ya estaban implementados los contratos, ambas API, controles ZIP/XML, extracción,
+cancelación, conservación y 53 pruebas. No se encontraron archivos truncados,
+errores de sintaxis, implementaciones duplicadas o dependencias circulares en el
+subpaquete. Faltaban el cierre documental y la auditoría final del código existente;
+esta revisión reprodujo y corrigió cinco defectos concretos descritos más abajo.
+Se volvió a comprobar Python **3.15.1**, HTTPX **0.28.1** y SQLite **3.53.4**,
+sin abrir bases operativas.
+
 Se añade el subpaquete `spica.adquisicion.verificacion.docx` sin modificar la API
 del verificador anterior, su criterio `utilizable_documentalmente`, transporte,
 RAW, catálogo o contratos científicos. Los contratos DOCX son nuevos y locales.
 La importación en un proceso nuevo no carga HTTPX, SQLite, transportes, integración
 o almacenamiento. No depende de scripts de `herramientas`.
 
-| Archivo nuevo | Responsabilidad |
+| Archivo recuperado del WIP | Responsabilidad |
 |---|---|
 | [__init__.py](../src/spica/adquisicion/verificacion/docx/__init__.py) | Exportaciones explícitas del nuevo subpaquete |
 | [modelos.py](../src/spica/adquisicion/verificacion/docx/modelos.py) | Contratos inmutables y política validada de límites |
@@ -32,6 +48,11 @@ o almacenamiento. No depende de scripts de `herramientas`.
 | [_extraccion.py](../src/spica/adquisicion/verificacion/docx/_extraccion.py) | Texto, estilos, tablas, propiedades y localizadores Clark |
 | [test_inspector_docx.py](../tests/test_inspector_docx.py) | Fixtures OOXML generados y pruebas adversariales, sin documentos reales |
 | Este informe | Arquitectura, garantías, pruebas, límites y condiciones futuras |
+
+En la reanudación se modificaron únicamente `_extraccion.py`, `_paquete.py`,
+`tests/test_inspector_docx.py` y este informe. Los otros cuatro módulos recuperados
+se conservaron. No se crearon otros archivos en el repositorio ni se cambiaron
+contratos públicos anteriores, dependencias o módulos estables.
 
 La infraestructura reutilizada es
 [`verificacion/_xlsx.py`](../src/spica/adquisicion/verificacion/_xlsx.py):
@@ -83,7 +104,7 @@ límites y cancelación producen resultados estructurados sin mensajes internos.
 |---|---|
 | `IdentidadDOCX` | Identificador lógico neutro del llamador, origen memoria/archivo, tamaño y SHA medido o `None` si no se pudo completar. No crea asset_id o identidad de estación |
 | `ResultadoDOCX` | Estado, identidad, límites, partes, relaciones, párrafos, tablas, propiedades, advertencias, rechazos, omisiones, conservación, consumo y versión del inspector `0.1.0` |
-| `ParteDOCX` | Nombre del perfil, MIME, bytes comprimidos/declarados/observados y CRC. Solo se publican estas observaciones tras la pasada completa compartida de CRC/tamaños; pueden ser parciales respecto al inventario del perfil si luego se detiene |
+| `ParteDOCX` | Nombre del perfil, MIME, bytes comprimidos/declarados/observados y CRC. Solo se publican después de completar la verificación compartida y las lecturas DOCX con detección de excedentes. El inventario puede quedar parcial si se agota un presupuesto al construirlo |
 | `RelacionDOCX` | Parte .rels, ID original acotado, tipo admitido y destino interno. Nunca se devuelve un destino externo no admitido |
 | `ReferenciaDOCX` | Archivo/hash, parte, ruta Clark con índices, ordinal de párrafo, tabla, fila y celda cuando correspondan |
 | `ParrafoDOCX` | Referencia, texto, origen cuerpo/encabezado/pie/nota, estilo original y reconocimiento de título por estilo |
@@ -125,6 +146,10 @@ Secuencia implementada:
 4. Pasada DOCX: tipos de contenido, relaciones internas y grafo alcanzable,
    raíces de partes y detección de actividad antes de aceptar su extracción.
    Se procesa un árbol por contexto, liberando sus referencias antes del siguiente.
+   Cada entrada se lee usando una copia de ZipInfo con un byte testigo adicional:
+   así se detecta contenido sobrante que ZipExtFile recortaría al tamaño declarado.
+   Se comparan tamaño observado y CRC; las imágenes también se leen completamente.
+   En DEFLATED se comprueba además el fin real del flujo, sin datos sobrantes.
 5. Comprobación final de presupuesto/cancelación y, para archivos, reapertura y
    huella/firma posterior. El original solo se abre `rb`; no se extrae ZIP a disco.
 
@@ -141,9 +166,16 @@ El DOCX debe ser Transitional: MIME principal
 Una extensión, MIME HTTP, firma PK o ausencia de macros por sí solos no bastan.
 No se implementa validación exhaustiva XSD de toda la norma OOXML.
 
+La comprobación final DEFLATE utiliza el estado `_decompressor` y `_compress_left`
+de ZipExtFile de **CPython 3.15.1**, porque su API de lectura puede aceptar un flujo
+sin marcador final aunque tamaño y CRC coincidan. Es una dependencia privada
+del intérprete, probada con una regresión específica: si el estado no existe o no
+puede comprobarse, se rechaza la inspección. No se implementa otro descompresor.
+Actualizar Python exige repetir estos casos; no se promete portabilidad sin revisión.
+
 | Parte admitida | Comprobación y tratamiento |
 |---|---|
-| `[Content_Types].xml`, relaciones | Tipos declarados coherentes; IDs únicos, principal única, destinos existentes y alcanzables, tipos de relación permitidos |
+| `[Content_Types].xml`, relaciones | Estructura plana, sin contenido anidado, texto o atributos desconocidos; tipos declarados coherentes, IDs únicos, principal única, destinos existentes y alcanzables, tipos de relación permitidos |
 | `word/document.xml` | Cuerpo único; estructura textual mínima coherente y extracción literal |
 | `word/styles.xml`, settings/fontTable/webSettings/numbering | MIME/raíz definidos en el perfil; sin ejecutar formato, herencia o numeración. Ambigüedad global de estilos/settings omite texto de todas las partes |
 | `word/headerN.xml`, `word/footerN.xml` | Nombre/MIME/raíz/relación coherentes; se extrae cada parte una vez, sin decidir dónde se vería en páginas/secciones |
@@ -195,8 +227,9 @@ bloqueada. El plazo no es una garantía rígida de tiempo total. Cancelación no
 simula verificaciones finales que no ocurrieron.
 
 Ensayo medido exclusivamente con un fixture de **206557 bytes**, **100 párrafos**
-y **200000 caracteres**: pico observado de asignaciones Python **1064448 bytes**,
-duración **0.099759 s**, pico contable **512704 bytes**. Tres XML y 308 nodos en la
+y **200000 caracteres**, repetido en la reanudación: pico observado de asignaciones
+Python **862745 bytes**, duración **0.107824 s**, pico contable **512497 bytes**.
+Tres XML y 308 nodos en la
 pasada de extracción. Son medidas de ese caso, no prueba de memoria/tiempo máximos
 para cualquier documento. La prueba de memoria usa un umbral amplio de 32 MiB
 para ese fixture y verifica también el rechazo por presupuesto contable pequeño.
@@ -209,6 +242,12 @@ explícitos admitidos. Son valores XML decodificados: las reglas XML de entidade
 de carácter y saltos de línea corresponden al parser, no a una normalización
 científica o conservación byte a byte del fragmento. Los bytes originales quedan
 identificados y preservados para cotejar cualquier cita.
+
+Se distinguen los tabuladores de contenido `w:r/w:tab` de las posiciones de
+tabulación de formato `w:pPr/w:tabs/w:tab`: estas últimas no añaden caracteres.
+Los saltos, guiones y referencias de notas deben aparecer en un run; los
+hipervínculos internos deben estar dentro del párrafo. Un contexto inline
+incoherente se rechaza, en lugar de omitir texto silenciosamente.
 
 Los títulos se reconocen solo por estilos de párrafo declarados con outlineLvl
 0–8 o nombres Title/Subtitle, o un nivel explícito de párrafo. No se resuelve
@@ -271,7 +310,7 @@ Se construyen todos los ZIP/XML en código de prueba, con nombres/fechas sintét
 no se añaden binarios institucionales a Git. Archivos locales solo en directorios
 temporales `spica-docx-84g-*`, con limpieza de su raíz propia verificada.
 
-**53 pruebas nuevas** cubren los 30 grupos solicitados, agrupando variantes
+**58 pruebas del 84-G** cubren los 30 grupos solicitados, agrupando variantes
 adversariales en subtests. Incluyen documento válido/vacío/sin tablas; runs,
 títulos, varias tablas/anidadas, encabezados/pies, notas y propiedades; ZIP/CRC,
 duplicados/rutas/enlaces/cifrado/métodos/tamaños/expansión/ZIP64; MIME/raíces,
@@ -280,6 +319,30 @@ PI/XInclude/extensiones; límites de XML/texto/memoria/inventario; cancelación/
 conservación física y referencia determinista. Mocks prohíben archivos/red/DNS,
 SQLite, subprocesos y extracción a disco en la API de bytes. No son pruebas
 de suficiencia científica, documentos maliciosos ilimitados o la norma OOXML completa.
+
+### Recuperación y defectos corregidos
+
+Primero se ejecutaron las **53 pruebas existentes del WIP**, todas aprobadas
+en **1.107 s**, antes de modificar código. La revisión adversarial adicional
+reprodujo estas condiciones; aprobar las pruebas anteriores no las descartaba:
+
+| Hallazgo reproducido | Riesgo previo | Corrección y comprobación |
+|---|---|---|
+| Tabulador de formato añadido al texto | Medio: alteración del literal extraído | Extraer texto solo de hijos de runs; probar formato solo y formato combinado con tabulación real |
+| Hipervínculo fuera de un párrafo aceptado sin extraer su texto | Medio: omisión silenciosa presentada como validada | Comprobar contextos inline, estilo, saltos y secciones; rechazar estructuras incoherentes |
+| Contenido XML anidado o desconocido en tipos/relaciones ignorado | Medio: aceptación estructural improcedente; no se ejecutaba ni resolvía el destino | Perfil plano explícito antes de interpretar controles; probar relación anidada externa, atributos y texto no admitidos |
+| Tamaño y CRC del prefijo ocultaban bytes descomprimidos sobrantes | Alto para la garantía de integridad técnica | Lectura con un byte testigo y comparación real; variantes STORED/DEFLATED, XML/imagen; no promover inventarios antes de completarla |
+| Flujo DEFLATE sin BFINAL aceptado con tamaño y CRC correctos | Alto para la garantía de integridad técnica | Exigir final de flujo verificable; probar truncamiento lógico y ausencia del estado interno requerido |
+
+Los cinco casos se incorporaron como **cinco pruebas nuevas de recuperación**,
+con variantes en subtests. La última ejecución dirigida aprobó **58/58 en 1.020 s**,
+con **0 fallos y 0 errores**. No se debilitaron límites ni se cambiaron pruebas
+históricas, permisos o contratos para obtener ese resultado.
+
+Un ejemplo sintético con estilo de título y tabla produjo exactamente tres párrafos
+(`Titulo sintetico`, `00123`, `literal`), un título, una tabla, una fila y dos celdas;
+la repetición dio un resultado idéntico. Las pruebas resuelven los localizadores
+Clark contra el XML fuente y comprueban que el texto de celdas anidadas no se duplica.
 
 Antes de la suite completa, aprobaron **115 pruebas dirigidas en 3.404 s**:
 52 del inspector en ese momento y 63 anteriores de formato/XLSX. El último caso
@@ -310,12 +373,64 @@ interpretar executable=None de subprocess en Windows. Las pruebas nuevas DOCX
 aprobaron. Se corrigió exclusivamente esa guardia temporal, sin tocar pruebas
 anteriores/ACL/código estable, y se repitió la suite con el contexto normal del
 propietario para comprobar los temporales privados. No se oculta esa primera
-ejecución como aprobada. Los resultados finales se registran tras el cierre.
+ejecución como aprobada. La repetición de aquella sesión, recuperada en el historial,
+aprobó **1496 pruebas en 130.427 s**. Es evidencia histórica, no sustituye la nueva
+ejecución sobre las correcciones de esta reanudación.
 
 `pip check`: **No broken requirements found.**, código 0. La última suite completa
 histórica reportada era 1431; el repositorio ya contiene 12 pruebas del 84-E,
-de modo que la base previa a 84-G es **1443** y las **53 nuevas** llevan el total
-descubierto a **1496**. No se suman otra vez las pruebas dirigidas que se solapan.
+de modo que la base previa a 84-G es **1443**. El WIP añadió 53 y esta recuperación
+añadió 5: **1431 + 12 + 53 + 5 = 1501**. No se suman otra vez las pruebas
+dirigidas que se solapan. La corrida intermedia de esta reanudación aprobó **1499
+pruebas en 176.738 s**, antes de las dos últimas regresiones ZIP. El resultado
+definitivo del código final se registra a continuación.
+
+### Cierre de la reanudación
+
+La ejecución final del **2026-11-06**, con el código corregido, terminó con código 0:
+
+```text
+Ran 1501 tests in 153.723s
+
+OK
+GUARDIA_84G {'red': 0, 'rutas_operativas': 0, 'sqlite_operativo': 0, 'procesos_no_admitidos': 0}
+```
+
+**1501 aprobadas, 0 fallidas, 0 con errores y 0 omitidas.** Se preservan las
+1431 históricas, las 12 anteriores del 84-E y las 53 del WIP; las 5 añadidas en
+esta recuperación llevan el inspector a 58. No se modificaron pruebas anteriores.
+La salida verbose completa y la guardia auxiliar se conservaron fuera del repositorio,
+en el directorio temporal sintético
+`%TEMP%\spica-84g-reanudacion-3d912e0481f84a2c9b49b0d17cbcb6e9\`;
+el registro definitivo es `suite-final.log`. Estos auxiliares no son evidencia
+institucional, no contienen el DOCX real y no forman parte del producto.
+
+Comprobaciones finales adicionales:
+
+- `python -B -m pip check`, usando exclusivamente `.venv`: **No broken requirements found.**, código 0.
+- Compilación AST en memoria de seis módulos y sus pruebas: sin errores de sintaxis,
+  definiciones duplicadas o ciclos locales; sin eval/exec, extracción a disco o
+  funciones de escritura en el código de producción. No se generaron archivos pyc.
+- Importación aislada: no carga HTTPX, SQLite, transporte, RAW o integración.
+- Los **13 enlaces locales** del informe existen y se comprobaron offline.
+- `git diff --check`: sin errores, código 0. No hay archivos nuevos sin seguimiento.
+- Rama y HEAD finales: **feature/suadc-http**, **85a8c22**, sin commits o push.
+  Las únicas diferencias respecto al WIP son las siguientes:
+
+```text
+ M docs/inspector_docx_paso84g.md
+ M src/spica/adquisicion/verificacion/docx/_extraccion.py
+ M src/spica/adquisicion/verificacion/docx/_paquete.py
+ M tests/test_inspector_docx.py
+```
+
+La guardia temporal de Python bloqueó red, acceso/mutación de ubicaciones operativas
+y subprocesos distintos de Python/Git. Durante la suite final no registró intentos
+bloqueados. Las bases y archivos utilizados por pruebas históricas fueron sintéticos
+en temporales, nunca SQLite/RAW/staging operativos. La ejecución con contexto normal
+del propietario permitió las pruebas históricas de permisos privados sin modificar
+ACL, permisos operativos o sus expectativas. No hubo conexiones externas, GET reales,
+descargas, instalaciones, Word, macros, migraciones o activación científica.
 
 ## 8. Condiciones del futuro ensayo institucional y riesgos pendientes
 
@@ -348,5 +463,7 @@ Riesgos residuales principales: perfil deliberadamente limitado y posible rechaz
 de DOCX legítimos; ausencia de validación XSD/renderizado completo; imágenes y
 propiedades omitidas; RSS y plazo cooperativos; TOCTOU bajo dueño malicioso;
 dependencia de helpers privados y ausencia de evidencia institucional real.
+La comprobación DEFLATE añade una dependencia explícita de internals de CPython;
+ante un cambio incompatible falla por rechazo, sin ampliar automáticamente el perfil.
 **APTO CON RESTRICCIONES** para el alcance demostrado. Cero GET/descargas,
 instalaciones, migraciones, escrituras operativas, commits o push.

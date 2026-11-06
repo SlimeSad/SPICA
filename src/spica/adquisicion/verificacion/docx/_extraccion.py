@@ -75,6 +75,11 @@ def detectar(arbol, parte, control, relaciones):
             "r": {"p", "hyperlink"}, "t": {"r"}, "tbl": {"body", "hdr", "ftr", "tc", "footnote", "endnote"},
             "tr": {"tbl"}, "tc": {"tr"}, "footnote": {"footnotes"}, "endnote": {"endnotes"},
             "pPr": {"p"}, "rPr": {"r", "pPr"}, "tblPr": {"tbl"}, "trPr": {"tr"}, "tcPr": {"tc"},
+            "hyperlink": {"p"}, "tabs": {"pPr"}, "tab": {"r", "tabs"},
+            "br": {"r"}, "cr": {"r"}, "noBreakHyphen": {"r"}, "softHyphen": {"r"},
+            "footnoteReference": {"r"}, "endnoteReference": {"r"},
+            "pStyle": {"pPr"}, "outlineLvl": {"pPr"},
+            "sectPr": {"body", "pPr"}, "headerReference": {"sectPr"}, "footerReference": {"sectPr"},
         }
         def estructura(e, padre=None):
             local = e.tag[len(Q):]
@@ -148,24 +153,30 @@ class Extractor:
                 pedazos, largo = [], 0
                 estilo = None
                 titulo = False
-                for h in e.iter():
-                    self.c.paso()
-                    if h.tag == Q + "pStyle":
-                        estilo = h.get(Q + "val")
+                propiedad = e.find(Q + "pPr")
+                if propiedad is not None:
+                    estilo_xml = propiedad.find(Q + "pStyle")
+                    if estilo_xml is not None:
+                        estilo = estilo_xml.get(Q + "val")
                         exigir(estilo in self.estilos, "estilo_referenciado_ausente")
                         exigir(self.estilos[estilo][0] == "paragraph", "tipo_estilo_incoherente")
                         titulo = self.estilos[estilo][1]
-                    elif h.tag == Q + "outlineLvl":
-                        titulo |= h.get(Q + "val") in tuple(str(i) for i in range(9))
-                    t = (h.text or "") if h.tag == Q + "t" else {
-                        Q + "tab": "\t", Q + "br": "\n", Q + "cr": "\n",
-                        Q + "noBreakHyphen": "\u2011", Q + "softHyphen": "\u00ad",
-                    }.get(h.tag, "")
-                    largo += len(t)
-                    self.c.limite(largo <= self.c.limites.max_texto_fragmento, "limite_texto_fragmento")
-                    pedazos.append(t)
-                    if h.tag in (Q + "footnoteReference", Q + "endnoteReference"):
-                        self.usos_notas.add(("footnotes" if h.tag == Q + "footnoteReference" else "endnotes", h.get(Q + "id")))
+                    nivel = propiedad.find(Q + "outlineLvl")
+                    titulo |= nivel is not None and nivel.get(Q + "val") in tuple(str(i) for i in range(9))
+                # Solo hijos de runs: w:tabs/w:tab declara formato y no es texto.
+                for run in e.iter(Q + "r"):
+                    self.c.paso()
+                    for h in run:
+                        self.c.paso()
+                        t = (h.text or "") if h.tag == Q + "t" else {
+                            Q + "tab": "\t", Q + "br": "\n", Q + "cr": "\n",
+                            Q + "noBreakHyphen": "\u2011", Q + "softHyphen": "\u00ad",
+                        }.get(h.tag, "")
+                        largo += len(t)
+                        self.c.limite(largo <= self.c.limites.max_texto_fragmento, "limite_texto_fragmento")
+                        pedazos.append(t)
+                        if h.tag in (Q + "footnoteReference", Q + "endnoteReference"):
+                            self.usos_notas.add(("footnotes" if h.tag == Q + "footnoteReference" else "endnotes", h.get(Q + "id")))
                 p = ParrafoDOCX(self.ref(parte, caminos[id(e)], parrafo=npar,
                     tabla=tabla, fila=fila, columna=columna), self.c.literal("".join(pedazos)), origen, estilo, titulo)
                 self.parrafos.append(p)
