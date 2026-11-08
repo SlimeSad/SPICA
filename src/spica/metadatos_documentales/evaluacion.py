@@ -109,7 +109,9 @@ def evaluar_uso(expediente: ExpedienteMetadatos, operacion: OperacionUso,
                 agregar(nombre + "_no_acreditada", (i,))
         if a.presencia is P.AUSENTE:
             agregar("informacion_ausente", (i,))
-        if a.evidencia.nivel.value == "contradictoria":
+        # La reclasificación del nivel puede estar pendiente; un conflicto
+        # explícito conservado en la evidencia nunca debe quedar silenciado.
+        if a.evidencia.nivel.value == "contradictoria" or a.evidencia.contradicciones:
             agregar("evidencia_contradictoria", (i,))
         if a.evidencia.nivel.value == "inferida":
             agregar("afirmacion_inferida", (i,), not consulta)

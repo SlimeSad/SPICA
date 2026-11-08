@@ -1,6 +1,6 @@
 """Contratos documentales con fixtures ficticios, sin archivos institucionales."""
 
-from dataclasses import FrozenInstanceError, replace
+from dataclasses import FrozenInstanceError, asdict, replace
 from datetime import date, datetime, timezone
 from pathlib import Path
 import subprocess
@@ -321,6 +321,89 @@ class MetadatosDocumentalesTests(unittest.TestCase):
         a, b = afirmacion(), afirmacion('b', contenido='detalle', concepto='metodo')
         e = expediente(a, b, relaciones=(RelacionAfirmaciones('a', 'b', L.COMPLEMENTARIEDAD, 'distintos aspectos'),))
         self.assertEqual(evaluar_uso(e, O.INTERPRETACION_VARIABLE, ('a', 'b')), evaluar_uso(e, O.INTERPRETACION_VARIABLE, ('b', 'a')))
+
+    def test_conflicto_explicito_bloquea_aunque_el_nivel_no_se_haya_reclasificado(self):
+        a = afirmacion(completa=True, unidad='u')
+        for nivel in (N.DECLARADA, N.VERIFICADA, N.INFERIDA):
+            b = replace(a, evidencia=replace(a.evidencia, nivel=nivel,
+                contradicciones=('dos declaraciones incompatibles en el mismo ambito sintetico',)))
+            for op in O:
+                with self.subTest(nivel=nivel, op=op):
+                    r = evaluar_uso(expediente(b), op, ('a',))
+                    self.assertIn('evidencia_contradictoria', codigos(r))
+                    self.assertFalse(r.requisitos_documentales_satisfechos)
+                    self.assertFalse(r.ejecucion_autorizada)
+
+    def test_banderas_no_configurables_por_constructor_ni_replace(self):
+        a = afirmacion(completa=True, unidad='u')
+        for op in O:
+            r = evaluar_uso(expediente(a), op, ('a',))
+            for campo in ('ejecucion_autorizada', 'operacion_ejecutada'):
+                with self.subTest(op=op, campo=campo):
+                    self.assertIs(getattr(r, campo), False)
+                    with self.assertRaises(TypeError):
+                        ResultadoUso(r.expediente, r.operacion, r.seleccion, r.diagnosticos, **{campo: True})
+                    with self.assertRaises(TypeError):
+                        replace(r, **{campo: True})
+                    with self.assertRaises(FrozenInstanceError):
+                        setattr(r, campo, True)
+
+    def test_referencias_y_respaldos_anidados_conservan_inmutabilidad_cooperativa(self):
+        a = afirmacion(completa=True, unidad='u')
+        for objeto, campo, valor in (
+                (a.fuente.referencia, 'titulo', 'otro'),
+                (a.fuente.integridad, 'estado', V.DESCONOCIDO),
+                (a.fuente.integridad.procedencia, 'evidencia', 'otra'),
+                (a.referencia, 'seccion', 'otra'),
+                (a.evidencia, 'contradicciones', ()),
+                (a.constataciones[0], 'descripcion', 'otra')):
+            with self.subTest(campo=campo), self.assertRaises(FrozenInstanceError):
+                setattr(objeto, campo, valor)
+        with self.assertRaises(TypeError):
+            replace(a, evidencia=replace(a.evidencia, pendientes=['mutable']))
+
+    def test_mismo_id_local_no_permite_sustituir_otro_documento(self):
+        a = afirmacion()
+        f = replace(a.fuente, referencia=replace(a.fuente.referencia, sha256_referencia='2' * 64))
+        b = afirmacion('b', f)
+        with self.assertRaises(ValueError):
+            ExpedienteMetadatos((a.fuente, f), (a, b))
+        with self.assertRaises(ValueError):
+            ExpedienteMetadatos((a.fuente,), (b,))
+        with self.assertRaises(ValueError):
+            replace(a, fuente=f)
+        xlsx = fuente(tipo=T.XLSX)
+        docx = afirmacion(f=fuente(tipo=T.DOCX))
+        with self.assertRaises(TypeError):
+            replace(docx, fuente=xlsx, evidencia=replace(docx.evidencia, referencia=xlsx.referencia))
+
+    def test_referencia_sintactica_no_acredita_existencia_o_hash_fisico(self):
+        f = replace(fuente(tipo=T.XLSX), integridad=None, inspeccion=None)
+        ref = ReferenciaCelda(f.identificador, f.sha256, 'Hoja no comprobada', 'XFD1048576')
+        a = afirmacion(f=f)
+        a = replace(a, referencia=ref, evidencia=replace(a.evidencia, localizacion=localizar(ref)))
+        with patch('builtins.open', side_effect=AssertionError('no debe resolver archivos')):
+            r = evaluar_uso(expediente(a), O.CONSULTA_DOCUMENTAL, ('a',))
+        self.assertEqual(codigos(r), {'integridad_no_acreditada', 'inspeccion_no_acreditada'})
+        self.assertFalse(r.ejecucion_autorizada)
+
+    def test_asdict_no_es_deserializador_ni_permiso_sin_restricciones(self):
+        a = replace(afirmacion(completa=True, unidad='u'), restricciones=(R.UNIDAD_AMBIGUA,))
+        r = evaluar_uso(expediente(a), O.INTERPRETACION_VARIABLE, ('a',))
+        datos = asdict(r)
+        self.assertIs(datos['ejecucion_autorizada'], False)
+        self.assertEqual(datos['expediente']['afirmaciones'][0]['restricciones'], (R.UNIDAD_AMBIGUA,))
+        # Un volcado genérico no es una interfaz de carga admitida.
+        with self.assertRaises(TypeError):
+            ResultadoUso(**datos)
+        for campo in ('ejecucion_autorizada', 'operacion_ejecutada', 'version'):
+            datos.pop(campo)
+        with self.assertRaises(TypeError):
+            ResultadoUso(**datos)
+        copia = replace(r)
+        self.assertEqual(copia, r)
+        self.assertIn('restriccion.unidad_ambigua', codigos(copia))
+        self.assertFalse(copia.ejecucion_autorizada)
 
     def test_sin_red_archivos_sqlite_o_subprocesos_en_modelos_y_evaluacion(self):
         with patch('builtins.open', side_effect=AssertionError('archivo')), patch('pathlib.Path.open', side_effect=AssertionError('archivo')), \
