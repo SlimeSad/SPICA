@@ -90,7 +90,10 @@ def evaluar_registro(registro: RegistroQA, procedencia: ProcedenciaQA, *, config
         objetivos = c.variables if regla.categoria is C.VALORES else (None,)
         for campo in objetivos:
             if not registro.estructura_correcta:
-                yield emitir(regla, tuple(campos), E.EVALUACION_INCOMPLETA, "estructura_no_evaluable")
+                # Conservar el objetivo por variable incluso si no se pudo
+                # evaluarlo; la fila completa sigue en registro y su tupla bruta.
+                nombres = (campo,) if campo is not None else tuple(campos)
+                yield emitir(regla, nombres, E.EVALUACION_INCOMPLETA, "estructura_no_evaluable")
                 continue
             if rid == "L0-EST-001":
                 yield emitir(regla, (), E.COMPROBACION_SATISFECHA, "estructura_recibida_coherente")
