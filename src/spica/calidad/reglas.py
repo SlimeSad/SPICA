@@ -5,6 +5,9 @@ from ..perfilado.interpretacion import (VERSION_INTERPRETACION, clasificar_hora_
 from .modelos import (CategoriaQA as C, ConfiguracionQA, EstadoResultadoQA as E, FormatoQA,
                       ProcedenciaQA, RegistroQA, ReglaQA, ResultadoQA)
 
+# Versión de emisión/trazabilidad, independiente de condiciones y esquema QA.
+VERSION_EVALUADOR_NIVEL0 = "1.0.1"
+
 REGLAS_NIVEL0 = tuple(ReglaQA(f"L0-{prefijo}-{numero:03d}", "1.0.0", categoria, texto)
     for prefijo, categoria, textos in (
         ("EST", C.ESTRUCTURA, ("Coherencia del registro tabular recibido",)),
@@ -54,7 +57,8 @@ def evaluar_registro(registro: RegistroQA, procedencia: ProcedenciaQA, *, config
 
     def emitir(regla, nombres, estado, codigo, evidencia=(), parametros=(), valores=None):
         originales = tuple((n, campos.get(n)) for n in nombres) if valores is None else valores
-        return ResultadoQA(regla, registro, procedencia, originales, tuple(evidencia), tuple(parametros), estado, codigo)
+        parametros = tuple(parametros) + (("evaluador_nivel0", VERSION_EVALUADOR_NIVEL0),)
+        return ResultadoQA(regla, registro, procedencia, originales, tuple(evidencia), parametros, estado, codigo)
 
     def formato(regla, campo, esperado):
         texto = campos.get(campo)
