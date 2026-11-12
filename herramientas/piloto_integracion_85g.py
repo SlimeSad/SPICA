@@ -4,7 +4,7 @@ No es un ejecutor institucional, un permiso ni un orquestador general. No acepta
 rutas, clientes, callbacks o planes ejecutables. Reutiliza todos los motores.
 """
 
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 import csv
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -27,7 +27,7 @@ from spica.adquisicion.catalogo import (
 from spica.adquisicion.consultas_locales import ENCABEZADO_SENAMHI, ProcedenciaLocal
 from spica.adquisicion.integracion import AdaptadorHTTPRAW, ResultadoHTTPRAW, ErrorIntegracionHTTPRAW
 from spica.adquisicion.nucleo import Fuente
-from spica.adquisicion.transportes import ClienteHTTP, ConfiguracionHTTP, PoliticaReintentos
+from spica.adquisicion.transportes import ClienteHTTP, ConfiguracionHTTP, PoliticaReintentos, RegistroIntento
 from spica.adquisicion.verificacion import LectorCSV, PoliticaLecturaCSV, InformeLecturaCSV
 from spica.calidad import (
     ConfiguracionQA, EstadoEvaluacionQA, EvaluadorNivel0, InformeQA, LimitesQA,
@@ -40,6 +40,7 @@ from spica.calidad.consumo import (
 from spica.calidad.conciliacion_lotes import (
     EstadoConciliacionQA, InformeConciliacionQA, LoteQA, conciliar_lotes,
 )
+from herramientas.traza_cierre_85h import capturar_evidencia_85h
 
 VERSION_EJECUCION_85G = "0.1.0"
 FUENTE_SINTETICA = Fuente("SPICA-SINTETICA", "fixture-85g")
@@ -133,6 +134,13 @@ class InformeEjecucion85G:
         "sin_derivados_persistentes", "contextos_declarados_sin_unicidad_global")
     ejecucion_cientifica: bool = field(default=False, init=False)
     autorizacion_operativa: bool = field(default=False, init=False)
+    # Evidencia auxiliar 85-H; no cambia contratos de src/spica ni el JSON QA.
+    exportaciones: tuple[tuple[str, ...], ...] = field(default=(), repr=False)
+    recuperaciones: tuple[str, ...] = ()
+    recursos_adquiridos: tuple[str, ...] = ()
+    recursos_liberados: tuple[str, ...] = ()
+    captura_antes_cierre: str | None = field(default=None, repr=False)
+    error_http_raw: tuple[str, str, int | None, tuple[RegistroIntento, ...]] | None = None
 
     def __bool__(self):
         raise TypeError("informe_estructural_no_es_permiso")
@@ -195,7 +203,52 @@ def ejecutar_piloto_85g(contrato: ContratoEjecucion85G, contenido: bytes, *,
     fase, estado, diagnosticos = "validacion", EstadoEjecucion85G.INICIADA, ()
     raiz = adquisicion = registro = conciliacion = activo_id = None
     resultados, informes, lecturas, consumos = [], [], [], []
+    exportaciones, recuperaciones, abiertos, cerrados = [], [], [], []
+    captura_previa, captura_fallida, control_final_fallido = None, False, False
+    error_http_raw = None
     solicitudes = 0
+
+    def informe_actual(eliminados=False):
+        return InformeEjecucion85G(contrato, estado, fase, diagnosticos, tuple(traza), activo_id,
+            adquisicion, registro, tuple(resultados), tuple(informes), tuple(lecturas), tuple(consumos),
+            conciliacion, solicitudes, raiz, eliminados,
+            exportaciones=tuple(tuple(lote) for lote in exportaciones), recuperaciones=tuple(recuperaciones),
+            recursos_adquiridos=tuple(abiertos), recursos_liberados=tuple(cerrados),
+            captura_antes_cierre=captura_previa, error_http_raw=error_http_raw)
+
+    @contextmanager
+    def capturar_antes_de_cerrar():
+        nonlocal captura_previa, captura_fallida, control_final_fallido, activo_id
+        try:
+            yield
+        except ErrorIntegracionHTTPRAW as error:
+            # El adaptador puede informar un ID después de publicar y antes de
+            # retornar ResultadoHTTPRAW. Debe estar en la captura PREVIA también.
+            if type(error.activo_id) is str and re.fullmatch(r"[0-9a-f]{32}", error.activo_id):
+                activo_id = error.activo_id
+            raise
+        finally:
+            if adquisicion is not None:
+                try:
+                    almacen.recuperar(adquisicion.activo.asset_id)
+                    recuperaciones.append("pre_cierre")
+                except Exception:
+                    control_final_fallido = True
+            try:
+                captura_previa = capturar_evidencia_85h(informe_actual())
+            except Exception:
+                # No sustituir el error original ni impedir cerrar los recursos.
+                captura_fallida = True
+
+    def observar_recurso(pila, gestor, nombre):
+        valor = gestor.__enter__()
+        abiertos.append(nombre)
+        def salir(tipo, valor_error, tb):
+            respuesta = gestor.__exit__(tipo, valor_error, tb)
+            cerrados.append(nombre)  # Solo después de que __exit__ haya retornado.
+            return respuesta
+        pila.push(salir)
+        return valor
 
     def paso(nombre):
         nonlocal fase
@@ -221,17 +274,18 @@ def ejecutar_piloto_85g(contrato: ContratoEjecucion85G, contenido: bytes, *,
         paso("validacion")
         if len(contenido) > p.max_bytes:
             raise _Detener("limite_bytes_entrada", EstadoEjecucion85G.INCOMPLETA)
+        traza.append((fase, "completada"))
         with tempfile.TemporaryDirectory(prefix="spica-85g-", dir=_base_temporal()) as temporal:
             raiz = Path(temporal)
-            with ExitStack() as recursos:
+            with ExitStack() as recursos, capturar_antes_de_cerrar():
                 raw, staging = raiz / "raw", raiz / "staging"
                 raw.mkdir()
                 staging.mkdir()
-                almacen = recursos.enter_context(AlmacenRAW(raw, (staging,), max_bytes=p.max_bytes,
-                    claves_parametros_publicos=("producto_id",)))
-                cliente = recursos.enter_context(ClienteHTTP((ORIGEN_SIMULADO,),
+                almacen = observar_recurso(recursos, AlmacenRAW(raw, (staging,), max_bytes=p.max_bytes,
+                    claves_parametros_publicos=("producto_id",)), "raw_sqlite")
+                cliente = observar_recurso(recursos, ClienteHTTP((ORIGEN_SIMULADO,),
                     ConfiguracionHTTP(verificar_tls=True), transporte=httpx.MockTransport(responder),
-                    politica_reintentos=PoliticaReintentos(max_intentos=1), cancelacion=evento))
+                    politica_reintentos=PoliticaReintentos(max_intentos=1), cancelacion=evento), "cliente_mock")
                 # Perfil de ensayo explícito. MockTransport no demuestra negociación TLS.
                 if not URL_SIMULADA.startswith("https://") or not cliente.configuracion.verificar_tls:
                     raise _Detener("perfil_https_tls_requerido")
@@ -255,7 +309,8 @@ def ejecutar_piloto_85g(contrato: ContratoEjecucion85G, contenido: bytes, *,
                 traza.append((fase, "bytes_incorporados_y_controlados"))
 
                 paso("catalogo")
-                catalogo = recursos.enter_context(CatalogoCientifico(raiz / "catalogo-prueba.sqlite3"))
+                catalogo = observar_recurso(recursos, CatalogoCientifico(raiz / "catalogo-prueba.sqlite3"),
+                    "catalogo_cientifico_sqlite")
                 procedencia = ProcedenciaCatalogo("urn:spica:85g:simulacion",
                     datetime.now(timezone.utc), "MockTransport_sin_red", "asset_id=" + activo.asset_id)
                 catalogo.registrar_documental(FuenteCatalogo(FUENTE_SINTETICA, procedencia,
@@ -279,6 +334,8 @@ def ejecutar_piloto_85g(contrato: ContratoEjecucion85G, contenido: bytes, *,
                 for nombre in ("A", "B"):
                     paso("recuperacion_" + nombre)
                     ruta = almacen.recuperar(activo.asset_id)
+                    recuperaciones.append(fase)
+                    traza.append((fase, "completada"))
                     paso("qa_" + nombre)
                     lector = LectorCSV(ruta, codificacion="utf-8", delimitador=",", campos_esperados=16,
                         encabezado_declarado=True, cancelacion=evento,
@@ -287,20 +344,28 @@ def ejecutar_piloto_85g(contrato: ContratoEjecucion85G, contenido: bytes, *,
                     qa = EvaluadorNivel0(lector, procedencia_qa, configuracion=contrato.configuracion,
                         limites=LimitesQA(max_registros=p.max_registros, max_resultados=p.max_resultados),
                         cancelacion=evento)
-                    with qa:
-                        nativos = tuple(qa)
-                    resultados.append(nativos)
-                    informes.append(qa.informe)
-                    lecturas.append(lector.informe)
+                    emitidos = []
+                    try:
+                        with qa:
+                            for resultado in qa:
+                                emitidos.append(resultado)
+                    finally:
+                        # También conserva los emitidos antes de una excepción.
+                        nativos = tuple(emitidos)
+                        resultados.append(nativos)
+                        informes.append(qa.informe)
+                        lecturas.append(lector.informe)
                     if evento.is_set():
                         raise _Detener("cancelacion_solicitada", EstadoEjecucion85G.CANCELADA)
                     if informes[-1].estado is not EstadoEvaluacionQA.COMPLETA:
                         raise _Detener("evaluacion_estructural_incompleta", EstadoEjecucion85G.INCOMPLETA)
                     # Otra comprobación física, sin confiar solo en el DTO de procedencia.
                     almacen.recuperar(activo.asset_id)
+                    recuperaciones.append("post_qa_" + nombre)
                     traza.append((fase, "evaluacion_cerrada_y_original_recomprobado"))
                     paso("exportacion_" + nombre)
                     documentos, bytes_json = [], 0
+                    exportaciones.append(documentos)
                     for resultado in nativos:
                         if evento.is_set():
                             raise _Detener("cancelacion_solicitada", EstadoEjecucion85G.CANCELADA)
@@ -315,6 +380,7 @@ def ejecutar_piloto_85g(contrato: ContratoEjecucion85G, contenido: bytes, *,
                         if bytes_json > p.max_bytes_json:
                             raise _Detener("limite_bytes_json", EstadoEjecucion85G.INCOMPLETA)
                         documentos.append(documento)
+                    traza.append((fase, "completada"))
                     paso("consumo_" + nombre)
                     consumo = consumir_exportaciones(tuple(documentos), limites=limites_consumo)
                     consumos.append(consumo)
@@ -343,6 +409,7 @@ def ejecutar_piloto_85g(contrato: ContratoEjecucion85G, contenido: bytes, *,
     except _Detener as error:
         estado, diagnosticos = error.estado, (error.codigo,)
     except ErrorIntegracionHTTPRAW as error:
+        error_http_raw = (error.codigo, error.fase.value, error.codigo_http, error.intentos_http)
         if type(error.activo_id) is str and re.fullmatch(r"[0-9a-f]{32}", error.activo_id):
             activo_id = error.activo_id
         estado = (EstadoEjecucion85G.CANCELADA if error.codigo == "cancelado"
@@ -358,8 +425,15 @@ def ejecutar_piloto_85g(contrato: ContratoEjecucion85G, contenido: bytes, *,
     if not eliminados:
         estado = EstadoEjecucion85G.FALLIDA
         diagnosticos += ("limpieza_temporal_no_confirmada",)
+    if captura_fallida:
+        estado = EstadoEjecucion85G.FALLIDA
+        diagnosticos += ("captura_previa_no_disponible",)
+    if control_final_fallido:
+        estado = EstadoEjecucion85G.FALLIDA
+        diagnosticos += ("control_fisico_pre_cierre_fallido",)
+    if sorted(abiertos) != sorted(cerrados):
+        estado = EstadoEjecucion85G.FALLIDA
+        diagnosticos += ("cierre_recursos_no_confirmado",)
     traza.append(("cierre", "temporales_eliminados" if eliminados else "revision_necesaria"))
     traza.append((fase, estado.value))
-    return InformeEjecucion85G(contrato, estado, fase, diagnosticos, tuple(traza), activo_id, adquisicion,
-        registro, tuple(resultados), tuple(informes), tuple(lecturas), tuple(consumos),
-        conciliacion, solicitudes, raiz, eliminados)
+    return informe_actual(eliminados)
