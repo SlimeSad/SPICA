@@ -5,6 +5,11 @@ que registra el PASO 85-G. Se revisaron su [contrato](contrato_ejecucion_integra
 [piloto](piloto_integracion_vertical_paso85g.md) y [brechas](brechas_integracion_paso85g.md).
 No se reescriben esos documentos históricos.
 
+La reanudación parte del WIP **c259b62**, inicialmente limpio. Se conservan el
+modelo y las interfaces anteriores; se completa el cotejo de estados internos
+descrito abajo. El historial de ensayos de la sesión inicial se distingue de la
+nueva verificación en la sección 7 del informe del piloto.
+
 ## 1. Auditoría y necesidad acotada
 
 InformeEjecucion85G ya retiene el contrato, ActivoRAW/ResultadoHTTPRAW,
@@ -102,7 +107,7 @@ Una causa de cierre adicional se agrega sin borrar el diagnóstico anterior.
 | Enlace | Cotejo / límite de confianza |
 |---|---|
 | Entrada → activo | SHA/tamaño observado contra control esperado; IDs proyecto/objeto/recurso/fuente y activo conocido |
-| Transferencia → activo | SHA/tamaño HTTP y RAW; origen del doble, estado 200 y tamaño declarado; no autenticidad TLS |
+| Transferencia → activo | SHA/tamaño HTTP y RAW; origen del doble, HTTP 200, descarga COMPLETA, fase COMPLETADA, sin error o temporal restante; RAW INCORPORADA sin error; no autenticidad TLS |
 | Activo → catálogo | Fuente/producto/recurso/localizador, revisión y evidencia técnica enlazan asset_id; sin FK global |
 | Activo → recuperación | Retorno real de recuperar durante el ensayo; registro histórico no relectura posterior |
 | Recuperación → QA | Recuperación de esa pasada, procedencia fuente/recurso/activo/SHA de cada resultado; sin documento/adquisición inventados |
@@ -115,6 +120,15 @@ se conserva como incidencia; un tramo no iniciado no se inventa. Un cierre parci
 puede ser una representación coherente de una cadena incompleta. CONCLUIDA con
 datos esenciales ausentes, enlaces contradictorios o restricciones perdidas se
 rechaza. Una traza del fallo de SHA conserva ambos controles y la discrepancia.
+
+Para aceptar CONCLUIDA, ambas evaluaciones deben estar COMPLETA, con recorrido
+completo, motivo EOF, filas examinadas/finalizadas correspondientes a los nativos,
+cero evaluaciones incompletas y los límites previstos por el contrato. Ambos
+lectores deben declarar COMPATIBLE, recorrido completo y EOF, sin registro
+interrumpido o problemático; sus conteos incluyen encabezado y filas de datos y
+sus bytes corresponden al tamaño físico registrado. Un evento de éxito no
+sustituye estas comprobaciones. En un cierre parcial se conserva el estado real
+sin exigir falsamente que hayan terminado las fases posteriores.
 
 ## 5. Canonicalización, límites y modelo de confianza
 
@@ -155,13 +169,14 @@ concurrentes o código hostil del mismo intérprete.
 | Garantía | Qué se acredita |
 |---|---|
 | A — Física durante ejecución | Copia/hash/recuperación real de bytes sintéticos; controles antes y después de QA y antes del cierre |
-| B — Representación en memoria | Canonicalización y SHA contra control separado, proyección cotejada con informe |
-| C — Linaje | Correspondencia contractual de IDs, contenido y restricciones en el perfil fijo |
+| B — Coherencia de traza | Correspondencia contractual de IDs, etapas, estados, contenido y restricciones en el perfil fijo |
+| C — Integridad de representación | Canonicalización y SHA contra control separado, proyección cotejada con informe |
 | D — Reproducibilidad | A/B del mismo activo/contexto y reconstrucción determinista de la misma evidencia |
 | E — Después del cierre | Informe, traza y control siguen utilizables mientras el proceso/llamador los conserve |
 | F — Durabilidad | No implementada |
 | G — Recuperación tras apagado | No implementada |
 | H — Autenticidad independiente | No implementada; SHA no es firma institucional |
+| I — Validación científica | No ejecutada ni autorizada por el cierre estructural |
 
 ## 6. Efectos y restricciones
 

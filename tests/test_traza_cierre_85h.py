@@ -14,6 +14,10 @@ import httpx
 
 from herramientas import piloto_integracion_85g as h
 from herramientas import traza_cierre_85h as t
+from spica.adquisicion.almacenamiento import EstadoIncorporacion
+from spica.adquisicion.integracion import FaseHTTPRAW
+from spica.adquisicion.nucleo import EstadoDescarga
+from spica.adquisicion.verificacion import EstadoEstructura
 from spica.calidad.consumo import consumir_exportaciones, _resultado, _contexto
 from spica.calidad.conciliacion_lotes import LoteQA, conciliar_lotes, EstadoConciliacionQA
 
@@ -443,6 +447,62 @@ class Cierre85HTests(unittest.TestCase):
         # Las llamadas internas GET a MockTransport no son conexiones/GET externos.
         self.assertEqual(r.solicitudes_simuladas, 1)
         self.assertFalse(r.autorizacion_operativa)
+
+    def test_concluida_rechaza_qa_incompleta_o_conteos_de_recorrido_contradictorios(self):
+        qa = self.informe.informes_qa[0]
+        variantes = (
+            replace(qa, estado=h.EstadoEvaluacionQA.INCOMPLETA),
+            replace(qa, recorrido_completo=False),
+            replace(qa, motivo_fin='limite_resultados_qa'),
+            replace(qa, registros_examinados=0),
+            replace(qa, registros_finalizados=0),
+            replace(qa, evaluaciones_incompletas=1),
+            replace(qa, limites=replace(qa.limites, max_registros=1)),
+        )
+        for cambiado in variantes:
+            r = self.recapturar(replace(self.informe, informes_qa=(cambiado, self.informe.informes_qa[1])))
+            with self.subTest(cambiado=cambiado), self.assertRaises(ValueError):
+                t.construir_traza_85h(r)
+
+    def test_concluida_rechaza_lector_sin_eof_o_recorrido_inconsistente(self):
+        lector = self.informe.lecturas[0]
+        variantes = (
+            replace(lector, eof_alcanzado=False),
+            replace(lector, recorrido_completo=False),
+            replace(lector, estado=EstadoEstructura.INCOMPLETA),
+            replace(lector, motivo_fin='consumidor_detuvo_lectura'),
+            replace(lector, registros_correctos=0),
+            replace(lector, bytes_recorrido=0),
+        )
+        for cambiado in variantes:
+            r = self.recapturar(replace(self.informe, lecturas=(cambiado, self.informe.lecturas[1])))
+            with self.subTest(motivo=cambiado.motivo_fin), self.assertRaises(ValueError):
+                t.construir_traza_85h(r)
+
+    def test_concluida_rechaza_transferencia_adaptador_o_raw_no_finalizados(self):
+        a = self.informe.adquisicion
+        variantes = tuple(replace(a, informe_http=replace(a.informe_http, estado=estado))
+            for estado in (EstadoDescarga.PENDIENTE, EstadoDescarga.PARCIAL, EstadoDescarga.FALLIDA)) + (
+            replace(a, fase=FaseHTTPRAW.COMPROBACION),
+            replace(a, activo=replace(a.activo, estado=EstadoIncorporacion.INCONSISTENTE)),
+            replace(a, activo=replace(a.activo, error='evidencia_contradictoria_sintetica')),
+        )
+        for cambiado in variantes:
+            r = self.recapturar(replace(self.informe, adquisicion=cambiado))
+            with self.subTest(fase=cambiado.fase), self.assertRaises(ValueError):
+                t.construir_traza_85h(r)
+
+    def test_fallo_captura_conserva_informe_y_cierra_sin_conclusion_ficticia(self):
+        with patch.object(h, 'capturar_evidencia_85h', side_effect=ValueError('no_publicar_secreto')):
+            r = h.ejecutar_piloto_85g(contrato(), self.bytes)
+        d = self.verificar(r)
+        self.assertEqual(d['estado_final'], 'fallida')
+        self.assertFalse(d['cadena_completa'])
+        self.assertIsNone(d['captura_previa_sha256'])
+        self.assertIn('captura_previa_no_disponible', d['diagnosticos'])
+        self.assertEqual(len(d['evidencia']['consumos']), 2)
+        self.assertEqual(r.recursos_liberados, tuple(reversed(r.recursos_adquiridos)))
+        self.assertNotIn('no_publicar_secreto', json.dumps(d))
 
 
 if __name__ == '__main__':

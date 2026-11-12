@@ -33,6 +33,9 @@ ya no pueden verificarse al cerrar. El sello de traza no sustituye al original.
 | H85-08 — Media, abierta | Cancelación cooperativa y limpieza no resisten terminación forzada | Documentar ausencia de cierre garantizado; no implementar recuperación automática |
 | H85-09 — Media, corregida | Error del adaptador después de publicar comunica ID sin devolver el activo completo | Capturar ese ID antes del cierre y conservar error/fase/intentos; SHA observado desconocido permanece ausente |
 | H85-10 — Media, corregida | Un resumen QA declarado podría contradecir los nativos/JSON | Cotejar configuración, reglas únicas, conteos, procedencia y contexto, además de la huella |
+| H85-11 — Alta en el contrato experimental, corregida en la reanudación | CONCLUIDA podía coexistir con QA INCOMPLETA o recorrido/filas contradictorios | Cotejar estados, EOF, cardinalidad de filas y límites efectivos; regresiones de metadatos contradictorios |
+| H85-12 — Alta en el contrato experimental, corregida en la reanudación | Un lector sin EOF/COMPATIBLE podía acompañar una cadena completa | Exigir cierre efectivo de ambas lecturas, conteos y bytes coherentes |
+| H85-13 — Alta en el contrato experimental, corregida en la reanudación | Descarga PARCIAL, fase no final o RAW inconsistente podían pasar por huellas coincidentes | Exigir estados operativos terminales pertinentes y ausencia de evidencia contradictoria |
 
 Las gravedades condicionales no convierten limitaciones declaradas en defectos
 de los contratos estables. No se ha identificado necesidad de refactorización

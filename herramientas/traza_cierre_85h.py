@@ -14,7 +14,11 @@ import math
 import re
 from types import MappingProxyType
 
-from spica.calidad import restricciones_resultado
+from spica.adquisicion.almacenamiento import EstadoIncorporacion
+from spica.adquisicion.integracion import FaseHTTPRAW
+from spica.adquisicion.nucleo import EstadoDescarga
+from spica.adquisicion.verificacion import EstadoEstructura, InformeLecturaCSV
+from spica.calidad import restricciones_resultado, EstadoEvaluacionQA, InformeQA, LimitesQA
 from spica.calidad.consumo import EstadoConsumoQA, consumir_exportaciones, LimitesConsumoQA
 from spica.calidad.conciliacion_lotes import LoteQA, conciliar_lotes
 
@@ -145,7 +149,8 @@ def _limite(texto, max_bytes):
 
 def _auditar(r):
     """Cotejos puros contra objetos reales retenidos; no prueba su autenticidad."""
-    from herramientas.piloto_integracion_85g import FUENTE_SINTETICA, URL_SIMULADA, ORIGEN_SIMULADO
+    from herramientas.piloto_integracion_85g import (
+        FUENTE_SINTETICA, URL_SIMULADA, ORIGEN_SIMULADO, EstadoEjecucion85G)
     problemas, enlaces = [], []
 
     def enlace(nombre, condicion, disponible):
@@ -183,11 +188,14 @@ def _auditar(r):
         r.activo_id == activo.asset_id and activo.size_bytes == c.tamano_esperado
         and activo.sha256 == c.sha256_esperado and activo.declaracion.proyecto_id == c.proyecto_id
         and activo.declaracion.objeto_id == c.objeto_id and activo.declaracion.fuente == FUENTE_SINTETICA
-        and activo.declaracion.recurso_id == c.recurso_id), activo is not None)
+        and activo.declaracion.recurso_id == c.recurso_id
+        and activo.estado is EstadoIncorporacion.INCORPORADA and activo.error is None), activo is not None)
     enlace("transferencia_activo", a is not None and (
         a.informe_http.sha256 == activo.sha256 and a.informe_http.bytes_almacenados == activo.size_bytes
         and a.informe_http.bytes_declarados == activo.size_bytes and a.informe_http.origen == ORIGEN_SIMULADO + "/"
-        and a.informe_http.codigo_http == 200), a is not None)
+        and a.informe_http.codigo_http == 200 and a.informe_http.estado is EstadoDescarga.COMPLETA
+        and a.informe_http.error is None and a.fase is FaseHTTPRAW.COMPLETADA
+        and a.temporal_restante is None and a.informe_http.temporal_restante is None), a is not None)
     enlace("activo_catalogo", cat is not None and activo is not None and (
         cat.revision == 1 and cat.entidad.fuente == activo.declaracion.fuente
         and cat.entidad.producto_id == c.producto_id and cat.entidad.identificador == c.recurso_id
@@ -218,6 +226,29 @@ def _auditar(r):
                     or set(qa.reglas_ejecutadas) != {v.regla for v in lote}
                     or any(v.procedencia != qa.procedencia for v in lote)):
                 problemas.append("informe_qa_" + nombre + "_inconsistente")
+        if r.estado is EstadoEjecucion85G.CONCLUIDA:
+            # Un evento de éxito y un hash correcto no sustituyen los estados
+            # reales del motor/lector. Se cotejan antes de aceptar el cierre.
+            filas = len({v.registro.numero_registro for v in lote})
+            if (type(qa) is not InformeQA or qa.estado is not EstadoEvaluacionQA.COMPLETA
+                    or qa.recorrido_completo is not True or qa.motivo_fin != "eof"
+                    or any(type(getattr(qa, k)) is not int for k in (
+                        "registros_examinados", "registros_finalizados", "evaluaciones_incompletas"))
+                    or qa.registros_examinados != filas or qa.registros_finalizados != filas
+                    or qa.evaluaciones_incompletas != 0
+                    or qa.limites != LimitesQA(max_registros=c.presupuesto.max_registros,
+                                               max_resultados=c.presupuesto.max_resultados)):
+                problemas.append("cierre_qa_" + nombre + "_incompleto")
+            lector = r.lecturas[i]
+            if (type(lector) is not InformeLecturaCSV or lector.estado is not EstadoEstructura.COMPATIBLE
+                    or lector.recorrido_completo is not True or lector.eof_alcanzado is not True
+                    or lector.motivo_fin != "eof" or lector.encabezado_declarado is not True
+                    or lector.registros_correctos != filas + 1
+                    or lector.registros_completos != lector.registros_correctos
+                    or lector.registros_problematicos != 0 or lector.registro_interrumpido is not None
+                    or activo is None or lector.tamano_archivo != activo.size_bytes
+                    or lector.bytes_recorrido != activo.size_bytes):
+                problemas.append("cierre_lectura_" + nombre + "_incompleto")
         documentos = r.exportaciones[i] if i < len(r.exportaciones) else ()
         consumo = r.consumos[i] if i < len(r.consumos) else None
         valido = consumo is not None and consumo.estado is EstadoConsumoQA.CONTRATO_VALIDO_EN_ALCANCE
