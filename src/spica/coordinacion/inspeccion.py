@@ -15,6 +15,7 @@ from .modelos import (
 )
 from ._presupuesto import medir_descriptores
 from ._qa import revisar_cierre_qa, revisar_preparacion_qa
+from ._precondicion_rc14 import _admite_exportacion
 
 
 def _diag(codigo, campo="composicion", nivel=N.CONTRADICCION):
@@ -77,6 +78,11 @@ def inspeccionar_composicion(composicion: ComposicionOperaciones, *,
     Cierres QA son evidencia aportada coherente, no autenticación de ejecución.
     Ninguna etiqueta, orden o habilitación inicia operaciones o concede permiso.
     """
+    return _inspeccionar_composicion(composicion, cancelacion=cancelacion)[0]
+
+
+def _inspeccionar_composicion(composicion, *, cancelacion=None, aporte=None):
+    """Único recorrido; el aporte solo procede de la interfaz específica RC14."""
     if type(composicion) is not ComposicionOperaciones:
         raise TypeError("composicion_tipificada_requerida")
     if cancelacion is not None and type(cancelacion) is not Event:
@@ -114,6 +120,10 @@ def inspeccionar_composicion(composicion: ComposicionOperaciones, *,
                (c.restricciones_adicionales, "composicion:" + c.identificador))
     bases = {n.contexto.operacion_id: tuple(fuentes_restricciones(n)) for n in c.operaciones}
     todas = _propagadas((*comunes, *(f for n in c.operaciones for f in fuentes_restricciones(n))))
+    if aporte is not None and aporte.corresponde(c):
+        fuentes = tuple(((rp.restriccion,), origen) for rp in aporte.restricciones for origen in rp.origenes)
+        bases[aporte.dependencia.dependiente] += fuentes
+        todas = _propagadas((*comunes, *(f for n in c.operaciones for f in bases[n.contexto.operacion_id])))
     ancestros = {}
     for identidad in orden:
         ancestros[identidad] = set(anteriores[identidad])
@@ -121,7 +131,7 @@ def inspeccionar_composicion(composicion: ComposicionOperaciones, *,
             ancestros[identidad].update(ancestros[predecesora])
     nodos = {n.contexto.operacion_id: n for n in c.operaciones}
     secuencia = [nodos[i] for i in orden] if orden else sorted(c.operaciones, key=lambda n: n.contexto.operacion_id)
-    informes, por_id, consumos = [], {}, []
+    informes, por_id, consumos, dependencias = [], {}, [], []
     for nodo in secuencia:
         o = nodo.contexto
         if cancelacion is not None and cancelacion.is_set():
@@ -180,10 +190,18 @@ def inspeccionar_composicion(composicion: ComposicionOperaciones, *,
                 if d.dependiente != o.operacion_id:
                     continue
                 previa = por_id[d.predecesora]
-                if any(ref not in previa.nodo.contexto.referencias_resultado for ref in d.referencias_resultado):
+                referencias_ajenas = any(ref not in previa.nodo.contexto.referencias_resultado for ref in d.referencias_resultado)
+                if referencias_ajenas:
                     ds.append(_diag("referencia_requerida_no_declarada_por_predecesora", o.operacion_id))
-                if previa.estado_estructural is not E.APTO_ESTRUCTURALMENTE or not previa.cierre_qa_coherente_completo:
+                nativa = previa.estado_estructural is E.APTO_ESTRUCTURALMENTE and previa.cierre_qa_coherente_completo
+                especifica = _admite_exportacion(aporte, c, d, previa)
+                if especifica:
+                    ds.append(_diag("precondicion_exportacion_rc14_admitida_sin_cierre_qa", d.predecesora, N.INFORMACION))
+                if not nativa and not especifica:
                     ds.append(_diag("dependencia_sin_cierre_tecnico_compatible_aportado", d.predecesora, N.FALTANTE))
+                estado = (E.INCOMPATIBLE if referencias_ajenas or previa.estado_estructural is E.INCOMPATIBLE
+                          else E.APTO_ESTRUCTURALMENTE if nativa or especifica else E.PENDIENTE_DE_EVIDENCIA)
+                dependencias.append((d, estado))
             ds.append(_diag("solo_inspeccion_declarativa_sin_ejecucion", o.operacion_id, N.INFORMACION))
         informe = InspeccionOperacion(nodo, _unicos(ds), restricciones, tuple(comparaciones), cierre_completo)
         informes.append(informe)
@@ -194,5 +212,11 @@ def inspeccionar_composicion(composicion: ComposicionOperaciones, *,
         cancelado = _diag("cancelacion_inspeccion_observada", nivel=N.FALTANTE)
         globales.append(cancelado)
         informes = [replace(i, diagnosticos=_unicos((*i.diagnosticos, cancelado))) for i in informes]
-    return InformeComposicion(c, tuple(informes), _unicos(globales), orden, todas,
+    informe = InformeComposicion(c, tuple(informes), _unicos(globales), orden, todas,
         cuotas, tuple(consumos), visitas, texto, cancelada)
+    vistas = {d for d, _ in dependencias}
+    dependencias.extend((d, E.INCOMPATIBLE if any(x.nivel is N.CONTRADICCION for x in globales)
+                         else E.PENDIENTE_DE_EVIDENCIA) for d in c.dependencias if d not in vistas)
+    if cancelada:
+        dependencias = [(d, E.PENDIENTE_DE_EVIDENCIA) for d, _ in dependencias]
+    return informe, tuple(dependencias)

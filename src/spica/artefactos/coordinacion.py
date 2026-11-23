@@ -11,6 +11,8 @@ from ..contextos.modelos import _texto
 from ..coordinacion import ComposicionOperaciones, InformeComposicion, LimitesComposicion, RestriccionPropagada, inspeccionar_composicion
 from ..coordinacion.modelos import DependenciaOperacion, estado_diagnosticos
 from ..coordinacion.inspeccion import _unicos
+from ..coordinacion.inspeccion import _inspeccionar_composicion
+from ..coordinacion._precondicion_rc14 import _admite_exportacion, _admite_entrada
 from ..coordinacion._presupuesto import medir_descriptores
 from ..interoperabilidad.adaptadores import DiagnosticoAdaptacion as D, NivelDiagnostico as N
 from ..interoperabilidad.modelos import EstadoAptitud as E
@@ -197,7 +199,7 @@ def _recuperacion(r):
     return _unicos(ds), linaje, por_ref
 
 
-def _relacion(v, s, linaje, comprobaciones):
+def _relacion(v, s, linaje, comprobaciones, aporte=None):
     c = s.composicion
     ns = tuple(n for n in c.operaciones if n.contexto.operacion_id == v.operacion_id)
     ars = () if linaje is None else tuple(a for a in linaje.artefactos if a.descriptor.referencia == v.artefacto)
@@ -231,7 +233,10 @@ def _relacion(v, s, linaje, comprobaciones):
         if d.estado_logico is EstadoArtefacto.PARCIAL:
             ds.append(_diag("artefacto_recuperado_logicamente_parcial", v.entrada_id, N.FALTANTE))
         if d.tipo is not TipoArtefacto.ORIGINAL:
-            ds.append(_diag("productor_no_qa_sin_cierre_ejecucion_admitido", v.entrada_id, N.FALTANTE))
+            if _admite_entrada(aporte, c, v):
+                ds.append(_diag("cierre_exportacion_rc14_admitido_para_entrada_recuperada", v.entrada_id, N.INFORMACION))
+            else:
+                ds.append(_diag("productor_no_qa_sin_cierre_ejecucion_admitido", v.entrada_id, N.FALTANTE))
     if comp is None or comp.relativa is None:
         ds.append(_diag("contenido_solo_referenciado_sin_comprobacion_actual", v.entrada_id, N.FALTANTE))
     elif comp.estado_actual is not EstadoLocal.INTEGRO or not comp.lectura_completa:
@@ -242,13 +247,13 @@ def _relacion(v, s, linaje, comprobaciones):
     return RelacionRecuperada(v, a, comp, productora, _unicos(ds))
 
 
-def _dependencia(d, previa):
+def _dependencia(d, previa, aporte=None, composicion=None):
     if previa is None or any(x not in previa.nodo.contexto.referencias_resultado for x in d.referencias_resultado):
         return E.INCOMPATIBLE
     if previa.estado_estructural is E.INCOMPATIBLE:
         return E.INCOMPATIBLE
     return E.APTO_ESTRUCTURALMENTE if (previa.estado_estructural is E.APTO_ESTRUCTURALMENTE
-        and previa.cierre_qa_coherente_completo) else E.PENDIENTE_DE_EVIDENCIA
+        and previa.cierre_qa_coherente_completo or _admite_exportacion(aporte, composicion, d, previa)) else E.PENDIENTE_DE_EVIDENCIA
 
 
 def inspeccionar_integracion(solicitud, *, cancelacion=None):
@@ -257,6 +262,11 @@ def inspeccionar_integracion(solicitud, *, cancelacion=None):
     No certifica que DTO coherentes provengan de un proceso confiable. Tampoco
     interpreta métodos, parámetros, finalidades o nombres de archivo como código.
     """
+    return _inspeccionar_integracion(solicitud, cancelacion=cancelacion)
+
+
+def _inspeccionar_integracion(solicitud, *, cancelacion=None, aporte=None):
+    """Recorrido RC7 compartido, sin un segundo grafo ni despacho de efectos."""
     if type(solicitud) is not SolicitudIntegracion:
         raise TypeError("solicitud_integracion_rc7_requerida")
     if cancelacion is not None and type(cancelacion) is not Event:
@@ -279,8 +289,9 @@ def inspeccionar_integracion(solicitud, *, cancelacion=None):
     if ds:
         return InformeIntegracion(s, None, None, None, (), (), _unicos(ds), visitas, texto,
             cancelacion is not None and cancelacion.is_set())
-    base = inspeccionar_composicion(c if efectivos == c.limites else replace(c, limites=efectivos),
-        cancelacion=cancelacion)
+    candidata = c if efectivos == c.limites else replace(c, limites=efectivos)
+    base = (inspeccionar_composicion(candidata, cancelacion=cancelacion) if aporte is None else
+            _inspeccionar_composicion(candidata, cancelacion=cancelacion, aporte=aporte)[0])
     adicionales, linaje, comprobaciones = _recuperacion(s.recuperacion)
     ds.extend(adicionales)
     if linaje is not None:
@@ -290,7 +301,7 @@ def inspeccionar_integracion(solicitud, *, cancelacion=None):
         for antigua in linaje.inventario.composiciones:
             if antigua.proyecto == c.proyecto and antigua.identificador == c.identificador and antigua != c:
                 ds.append(_diag("composicion_recuperada_redefinida"))
-    relaciones = tuple(_relacion(v, s, linaje, comprobaciones) for v in sorted(s.vinculos,
+    relaciones = tuple(_relacion(v, s, linaje, comprobaciones, aporte) for v in sorted(s.vinculos,
         key=lambda v: (v.operacion_id, v.entrada_id, v.artefacto.object_id, v.artefacto.revision)))
     ids = {n.contexto.operacion_id for n in c.operaciones}
     if any(r.vinculo.operacion_id not in ids for r in relaciones):
@@ -349,7 +360,7 @@ def inspeccionar_integracion(solicitud, *, cancelacion=None):
                 if dep.dependiente != o.operacion_id:
                     continue
                 previa = por_id.get(dep.predecesora)
-                estado = _dependencia(dep, previa)
+                estado = _dependencia(dep, previa, aporte, c)
                 deps.append((dep, estado))
                 if previa is not None:
                     grupos.append(previa.restricciones)
@@ -386,7 +397,7 @@ def inspeccionar_integracion(solicitud, *, cancelacion=None):
             diagnosticos=_unicos(i.diagnosticos + conflictos)) for i in vista.operaciones))
     if base.orden_precedencia:
         finales = {i.nodo.contexto.operacion_id: i for i in vista.operaciones}
-        deps = [(d, _dependencia(d, finales.get(d.predecesora))) for d in c.dependencias]
+        deps = [(d, _dependencia(d, finales.get(d.predecesora), aporte, c)) for d in c.dependencias]
     return InformeIntegracion(s, linaje, base, vista, relaciones, tuple(deps),
         _unicos(ds + list(conflictos)), visitas, texto, cancelada)
 
